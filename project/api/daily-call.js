@@ -1,4 +1,4 @@
-// Vercel serverless function: mints a Daily.co meeting token for a call.
+/ Vercel serverless function: mints a Daily.co meeting token for a call.
 // Lives at /api/daily-call (Vercel auto-routes anything in /api).
 //
 // Required environment variables (set in Vercel → Settings → Environment Variables):
@@ -12,7 +12,7 @@
 // participant (caller_id or callee_id) of the call row. It never uses the
 // service-role key.
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.4.0";
+import { createClient } from "@supabase/supabase-js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -107,3 +107,4 @@ export default async function handler(req, res) {
     console.error("Daily token mint error:", err);
     return res.status(502).json({ error: "Could not reach Daily.co.", detail: err.message });
   }
+}

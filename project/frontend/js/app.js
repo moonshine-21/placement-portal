@@ -416,6 +416,19 @@ function setTrend(id, delta, suffix) {
 
 function matchTier(m) { return m >= 85 ? "high" : m >= 75 ? "med" : "low"; }
 
+// Shared with renderProfileCompletion() below — single source of truth for
+// "is this profile actually done" so we stop telling people to complete a
+// profile that's already complete.
+function isProfileComplete(profile) {
+  if (!profile) return false;
+  return Boolean(
+    profile.resume_text &&
+    profile.skills && profile.skills.length &&
+    profile.cgpa && profile.cgpa > 0 &&
+    profile.branch
+  );
+}
+
 async function loadShortlistedCount() {
   if (!supabase || !currentUser) return 0;
   try {
@@ -461,12 +474,31 @@ function renderEmptyDashboard(shortlistedCount) {
   document.getElementById("highMatches").textContent = "0";
   document.getElementById("shortlisted").textContent = String(shortlistedCount || 0);
   setRing("matchRing", 0);
-  document.getElementById("matchFoot").textContent = "Complete your profile to see matches";
+
+  // There are two very different reasons this can be empty: the profile
+  // isn't done yet, OR the profile is done but there are simply no
+  // companies in the system yet to match against. Don't tell a student
+  // with a complete profile to go complete their profile.
+  const profileDone = isProfileComplete(currentProfile);
+  const noCompanies = !allCompanies || allCompanies.length === 0;
+  const footMsg = profileDone
+    ? (noCompanies ? "No companies have posted openings yet" : "No eligible matches yet — check back soon")
+    : "Complete your profile to see matches";
+  const bodyMsg = profileDone
+    ? (noCompanies
+        ? "No matches yet. No companies have been added to the portal yet — check back once recruiters are onboarded."
+        : "No matches yet. Your profile doesn't meet the requirements for the companies currently listed.")
+    : "No matches yet. Add your skills and CGPA in Profile, then upload a resume.";
+  const aiMsg = profileDone
+    ? (noCompanies ? "Recommendations will appear once companies are added to the portal." : "No eligible companies right now — check back soon.")
+    : "Add your skills and CGPA in the Profile page to get AI recommendations.";
+
+  document.getElementById("matchFoot").textContent = footMsg;
   document.getElementById("highBar").style.setProperty("--w", "0%");
   document.getElementById("shortBar").style.setProperty("--w", "0%");
   document.getElementById("companyBody").innerHTML =
-    '<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">No matches yet. Add your skills and CGPA in Profile, then upload a resume.</td></tr>';
-  document.getElementById("aiRec").textContent = "Add your skills and CGPA in the Profile page to get AI recommendations.";
+    `<tr><td colspan="6" class="muted" style="text-align:center;padding:2rem">${bodyMsg}</td></tr>`;
+  document.getElementById("aiRec").textContent = aiMsg;
   renderProfileCompletion();
   updateDashboardTrends({ match_score: 0, companies_matched: 0, high_matches: 0, shortlisted: shortlistedCount || 0 });
 }
@@ -547,7 +579,12 @@ function renderMatches(matches) {
   if (!body) return;
   document.getElementById("matchCount").textContent = `${matches.length} companies`;
   if (!matches.length) {
-    body.innerHTML = '<tr><td colspan="7" class="muted" style="text-align:center;padding:2rem">No matches yet. Complete your profile first.</td></tr>';
+    const msg = isProfileComplete(currentProfile)
+      ? (!allCompanies || allCompanies.length === 0
+          ? "No matches yet. No companies have been added to the portal yet."
+          : "No matches yet. Your profile doesn't meet the requirements for the companies currently listed.")
+      : "No matches yet. Complete your profile first.";
+    body.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:2rem">${msg}</td></tr>`;
     return;
   }
   body.innerHTML = matches.map((m) => {
@@ -3005,6 +3042,9 @@ async function loadAcceptedFriends() {
             <div class="friend-row-sub">${escapeHtml(f.email || "")}</div>
           </div>
           <div class="friend-row-actions">
+            <button class="btn-ghost btn-sm" data-message-friend="${f.id}" data-message-name="${escapeHtml(name)}">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>Message
+            </button>
             <button class="btn-primary btn-sm" data-call-friend="${f.id}">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Call
             </button>
@@ -3012,6 +3052,12 @@ async function loadAcceptedFriends() {
         </div>`;
       })
       .join("");
+    el.querySelectorAll("[data-message-friend]").forEach((b) =>
+      b.addEventListener("click", () => {
+        switchView("messages");
+        openConversationWith(b.dataset.messageFriend, b.dataset.messageName);
+      })
+    );
     el.querySelectorAll("[data-call-friend]").forEach((b) =>
       b.addEventListener("click", () => startCall(b.dataset.callFriend, "friend"))
     );
@@ -3261,3 +3307,4 @@ async function endCall(callId) {
     console.error("endCall", err);
   }
 }
+

@@ -1736,6 +1736,10 @@ async function initDashboard() {
   initCompanyFeatures();
   initMessaging();
   initFriends();
+  // Incoming calls must be heard app-wide, not only while the Friends tab
+  // is open — otherwise a call rings and nobody sees the popup unless the
+  // callee happens to already be on that one view.
+  subscribeCalls();
 
   if (currentProfile?.role === "company") {
     applyRoleUI("company");

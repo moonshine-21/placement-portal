@@ -12,7 +12,7 @@
 // participant (caller_id or callee_id) of the call row. It never uses the
 // service-role key.
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.4.0";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -24,8 +24,11 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Missing 'call_id' or 'access_token'" });
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+  // Prefer the plain server-side names; fall back to the VITE_-prefixed ones
+  // in case only the frontend env vars were configured in Vercel (same
+  // Supabase project either way — the anon key is safe to reuse here).
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
   const dailyApiKey = process.env.DAILY_API_KEY;
   const dailyDomain = process.env.DAILY_DOMAIN;
 
@@ -39,7 +42,7 @@ export default async function handler(req, res) {
   // Create a Supabase client that carries the caller's access token, so RLS
   // enforces that they are a participant of this call row.
   const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    global: { headers: { Authorization: `Bearer ${access_token}` } },
+    global: { headers: { Authorization: Bearer ${access_token} } },
   });
 
   const { data: callRow, error: fetchErr } = await supabase
@@ -54,7 +57,7 @@ export default async function handler(req, res) {
   }
 
   const roomName = callRow.room_name;
-  const roomUrl = `https://${dailyDomain}.daily.co/${roomName}`;
+  const roomUrl = https://${dailyDomain}.daily.co/${roomName};
 
   // 1. Create the room if it doesn't exist. A 409 ("room already exists") is fine.
   const exp = Math.floor(Date.now() / 1000) + 60 * 60; // room expires in 1 hour
@@ -63,7 +66,7 @@ export default async function handler(req, res) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${dailyApiKey}`,
+        Authorization: Bearer ${dailyApiKey},
       },
       body: JSON.stringify({
         name: roomName,
@@ -87,7 +90,7 @@ export default async function handler(req, res) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${dailyApiKey}`,
+        Authorization: Bearer ${dailyApiKey},
       },
       body: JSON.stringify({
         properties: { room_name: roomName, user_name: user_name || "Guest", exp },
@@ -104,4 +107,3 @@ export default async function handler(req, res) {
     console.error("Daily token mint error:", err);
     return res.status(502).json({ error: "Could not reach Daily.co.", detail: err.message });
   }
-}

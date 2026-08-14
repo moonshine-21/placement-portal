@@ -1,3 +1,15 @@
+// ============================================================================
+// src/views/MessagesView.tsx
+//
+// WHAT THIS FILE IS: the direct-messages (DM) page — a two-column layout
+// (conversation list on the left, the open thread on the right, collapsing
+// to a single column on mobile). Supports text, file attachments, inline
+// quiz cards, live updates via Supabase realtime, and — the newest
+// addition — automatically triggering an AI reply after messaging a bot
+// company (see the `otherIsBot` check inside sendMessage, and
+// api/bot-message-reply.ts on the server side).
+// ============================================================================
+
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
@@ -10,49 +22,68 @@ import { CompanyProfileCardModal } from '@/components/CompanyProfileCardModal';
 import { QuizCard } from '@/components/QuizCard';
 import type { Conversation, Message, Profile, CompanyProfile } from '@/lib/supabase';
 
+// A `conversations` row only stores two raw participant IDs (user_a/
+// user_b) — this extended shape adds everything the UI actually needs to
+// DISPLAY that conversation (who the "other" person/company is, their
+// name/avatar/role, and whether they're an AI bot), computed once when
+// the list loads rather than looked up repeatedly while rendering.
 type ConvWithOther = Conversation & { otherId: string; otherName: string; otherAvatar: string; otherRole: string; otherIsBot: boolean };
 
 type Props = {
   onStartCall: (calleeId: string, callType: 'friend' | 'interview') => void;
+  // These two work together to let ANOTHER page (e.g. "Message this
+  // applicant" on ApplicantsView) tell this page "please open a
+  // conversation with this specific person the moment you load" — see the
+  // matching effect below.
   pendingOpenUserId?: string | null;
   onOpened?: () => void;
 };
 
 export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props) {
   const { profile, user } = useAuth();
-  const { showToast } = useToast();
   const flags = useFeatureFlags();
   const callsEnabled = flags.calls !== false;
   const [conversations, setConversations] = useState<ConvWithOther[]>([]);
-  const [activeConv, setActiveConv] = useState<ConvWithOther | null>(null);
+  const [activeConv, setActiveConv] = useState<ConvWithOther | null>(null); // which conversation is currently open in the right-hand thread panel
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [attachFile, setAttachFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
-  const [viewProfileId, setViewProfileId] = useState<string | null>(null);
-  const [viewCompanyId, setViewCompanyId] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messageChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const [viewProfileId, setViewProfileId] = useState<string | null>(null); // which student's ProfileCardModal is open, if any
+  const [viewCompanyId, setViewCompanyId] = useState<string | null>(null); // which company's CompanyProfileCardModal is open, if any
+  const messagesEndRef = useRef<HTMLDivElement>(null); // an empty marker div at the bottom of the thread, used to auto-scroll to it
+  const messageChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null); // the current realtime subscription, tracked so it can be swapped out when switching conversations
 
+  // Loads every conversation this user is part of, enriched with the
+  // OTHER participant's display info. This is more involved than a
+  // typical `load` function because the "other person" could be either a
+  // student (in `profiles`) OR a company (in `company_profiles`) — two
+  // completely different tables — so it has to check both.
   const loadConversations = async () => {
     if (!user) return;
     const { data: convs } = await supabase
       .from('conversations')
       .select('*')
+      // A conversation row can have the current user as EITHER user_a or
+      // user_b — `.or(...)` covers both possibilities in one query.
       .or(`user_a.eq.${user.id},user_b.eq.${user.id}`)
-      .order('last_message_at', { ascending: false });
+      .order('last_message_at', { ascending: false }); // most recently active conversations first
     if (!convs) { setLoading(false); return; }
 
+    // For each conversation, figure out which ID belongs to the OTHER person.
     const otherIds = convs.map((c: Conversation) => (c.user_a === user.id ? c.user_b : c.user_a));
     if (otherIds.length === 0) { setConversations([]); setLoading(false); return; }
 
+    // Try to find all of them as STUDENT profiles first, in one batch query.
     const { data: profs } = await supabase
       .from('profiles')
       .select('id, full_name, avatar_url, role')
       .in('id', otherIds);
     const foundIds = new Set((profs || []).map((p: Pick<Profile, 'id' | 'full_name' | 'avatar_url' | 'role'>) => p.id));
+    // Whichever IDs weren't found as students must be companies —
+    // look those up separately.
     const missing = otherIds.filter((id: string) => !foundIds.has(id));
 
     let companyProfs: CompanyProfile[] = [];
@@ -61,10 +92,14 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
       companyProfs = (cp as CompanyProfile[]) || [];
     }
 
+    // Combine both sets of results into one lookup table (ID → display
+    // info), so the next step can look up EITHER kind of participant the
+    // same simple way.
     const profMap = new Map<string, { name: string; avatar: string; role: string; isBot: boolean }>();
     (profs || []).forEach((p: Pick<Profile, 'id' | 'full_name' | 'avatar_url' | 'role'>) => profMap.set(p.id, { name: p.full_name || 'User', avatar: p.avatar_url || '', role: p.role, isBot: false }));
     companyProfs.forEach((cp: CompanyProfile) => profMap.set(cp.id, { name: cp.org_name || 'Company', avatar: cp.avatar_url || '', role: 'company', isBot: cp.is_bot }));
 
+    // Build the final enriched list.
     const enriched: ConvWithOther[] = convs.map((c: Conversation) => {
       const otherId = c.user_a === user.id ? c.user_b : c.user_a;
       const info = profMap.get(otherId) || { name: 'User', avatar: '', role: 'student', isBot: false };
@@ -74,6 +109,9 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
     setLoading(false);
   };
 
+  // Loads every message in one conversation, oldest first, then scrolls
+  // the thread down to the newest one after a brief delay (giving React
+  // time to actually finish rendering the new messages before scrolling).
   const loadMessages = async (convId: string) => {
     const { data } = await supabase
       .from('messages')
@@ -84,7 +122,16 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
   };
 
+  // Subscribes to LIVE new messages in one specific conversation — this
+  // is what makes a reply (whether from a real person in another tab, or
+  // an AI bot replying a few seconds later) appear instantly without
+  // needing to refresh or re-open the conversation.
   const subscribeToConv = (convId: string) => {
+    // Always clean up any PREVIOUS conversation's subscription first —
+    // otherwise switching between conversations would leave old
+    // subscriptions running in the background forever, each one
+    // needlessly reloading messages for a conversation that's no longer
+    // even open.
     if (messageChannelRef.current) {
       try { supabase.removeChannel(messageChannelRef.current); } catch { /* ignore */ }
     }
@@ -97,6 +144,9 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
     messageChannelRef.current = ch;
   };
 
+  // Marks every message in this conversation that was sent BY THE OTHER
+  // PERSON (`neq('sender_id', user.id)`) and not yet read
+  // (`is('read_at', null)`) as read now.
   const markRead = async (convId: string) => {
     if (!user) return;
     await supabase.from('messages')
@@ -106,6 +156,9 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
       .is('read_at', null);
   };
 
+  // Switches the right-hand panel to show a specific (already-known)
+  // conversation — loads its messages, marks them read, and starts
+  // listening for live updates on it.
   const openConversation = (conv: ConvWithOther) => {
     setActiveConv(conv);
     loadMessages(conv.id);
@@ -113,8 +166,20 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
     subscribeToConv(conv.id);
   };
 
+  // Opens (or creates, if none exists yet) a conversation with a
+  // specific person by their user ID — used when arriving here from
+  // "Message" buttons elsewhere in the app (a friend's profile, an
+  // applicant's row, etc), rather than clicking an existing item in this
+  // page's own conversation list.
   const openConversationWith = async (otherUserId: string, otherName: string) => {
     if (!user) return;
+    // Conversation rows always store their two participant IDs in
+    // alphabetically SORTED order (`[a, b] = [...].sort()`) — this
+    // guarantees that looking up "the conversation between X and Y"
+    // always finds the same row regardless of which of the two people
+    // happens to be doing the looking-up. The exact same pattern is used
+    // server-side in api/_lib/bots.ts's sendBotMessage and
+    // src/lib/quiz.ts's sendQuizToStudent.
     const [a, b] = [user.id, otherUserId].sort();
     const { data: existing } = await supabase.from('conversations').select('*').eq('user_a', a).eq('user_b', b).maybeSingle();
     let conv = existing as Conversation | null;
@@ -123,6 +188,12 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
       conv = created as Conversation | null;
     }
     if (conv) {
+      // Build a minimal enriched object to open IMMEDIATELY (before the
+      // full conversation list has necessarily reloaded) — note
+      // `otherIsBot: false` is just a safe starting default here; if this
+      // actually turns out to be a bot conversation, the follow-up
+      // `loadConversations()` call below corrects it shortly after, once
+      // the real company_profiles lookup completes.
       const enriched: ConvWithOther = {
         ...conv,
         otherId: otherUserId,
@@ -136,6 +207,10 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
     }
   };
 
+  // If another page asked us (via the pendingOpenUserId prop) to open a
+  // specific conversation the moment this page loads, do that once, then
+  // tell the parent we've "consumed" the request (via onOpened) so it
+  // doesn't keep re-triggering on every re-render.
   useEffect(() => {
     if (pendingOpenUserId) {
       openConversationWith(pendingOpenUserId, '');
@@ -145,6 +220,8 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
 
   useEffect(() => {
     loadConversations();
+    // Clean up the message-subscription channel if this whole page is
+    // ever closed/navigated away from while a conversation is open.
     return () => {
       if (messageChannelRef.current) {
         try { supabase.removeChannel(messageChannelRef.current); } catch { /* ignore */ }
@@ -152,11 +229,14 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
     };
   }, [user]);
 
+  // Sends the current message (text and/or an attached file).
   const sendMessage = async () => {
-    if (!input.trim() && !attachFile) return;
+    if (!input.trim() && !attachFile) return; // nothing to send
     if (!activeConv || !user) return;
     setSending(true);
 
+    // If a file was attached, upload it FIRST — the message row itself
+    // just stores a reference (path/name/type) to the already-uploaded file.
     let attachmentUrl = '';
     let attachmentName = '';
     let attachmentType = '';
@@ -180,11 +260,16 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
     });
 
     if (!error) {
+      // Update the conversation list preview text (falls back to a
+      // paperclip + filename if there's an attachment but no typed text)
+      // and bump the "last active" timestamp so this conversation moves
+      // to the top of the list.
       await supabase.from('conversations').update({
         last_message: body || `📎 ${attachmentName}`,
         last_message_at: new Date().toISOString(),
       }).eq('id', activeConv.id);
 
+      // Notify the recipient with a bell-icon notification.
       await supabase.from('notifications').insert({
         user_id: activeConv.otherId,
         type: 'message',
@@ -201,6 +286,7 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
     loadMessages(activeConv.id);
     loadConversations();
 
+    // If we just messaged an AI bot company, trigger its reply.
     if (!error && activeConv.otherIsBot) {
       // Fire-and-forget: the bot's reply lands via the realtime subscription
       // already set up in subscribeToConv, so nothing here needs to block
@@ -217,13 +303,20 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
     }
   };
 
+  // Simple client-side search of the already-loaded conversation list, by
+  // the other participant's name.
   const filteredConvs = conversations.filter((c) =>
     c.otherName.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
     <div className="flex h-[calc(100vh-8rem)] overflow-hidden rounded-2xl border border-[var(--border)] glass">
-      {/* Conversations list */}
+      {/* ---------- Conversations list (left column) ---------- */}
+      {/* On mobile, this list and the thread panel below are mutually
+          exclusive — `activeConv ? 'hidden md:flex' : 'flex'` hides this
+          whole sidebar once a conversation is open, showing only the
+          thread (with a back button to return here). On desktop
+          (`md:` prefix) both are always shown side by side. */}
       <aside className={`${activeConv ? 'hidden md:flex' : 'flex'} w-full md:w-80 flex-col border-r border-[var(--border)]`}>
         <div className="border-b border-[var(--border)] p-4">
           <span className="font-semibold text-[var(--text-primary)]">Conversations</span>
@@ -255,6 +348,11 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
                   activeConv?.id === c.id ? 'bg-[var(--surface-hover)]' : 'hover:bg-[var(--surface-hover)]'
                 }`}
               >
+                {/* The avatar is its OWN clickable target (opening the
+                    right profile/company popup), separate from the outer
+                    button (which opens the conversation) —
+                    `e.stopPropagation()` stops a click on the avatar from
+                    ALSO triggering the outer button's onClick. */}
                 <span
                   onClick={(e) => {
                     e.stopPropagation();
@@ -282,18 +380,23 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
         </div>
       </aside>
 
-      {/* Thread */}
+      {/* ---------- Thread (right column) ---------- */}
       <div className={`${activeConv ? 'flex' : 'hidden md:flex'} flex-1 flex-col`}>
         {!activeConv ? (
+          // Nothing selected yet — shown on desktop by default, and on
+          // mobile only in the unlikely case this component somehow
+          // renders with `activeConv` null while NOT showing the list
+          // (which the CSS above otherwise prevents).
           <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
             <MessageSquare size={40} className="text-[var(--text-muted)]" />
             <p className="text-sm text-[var(--text-muted)] max-w-xs">Select a conversation, or message someone from a company profile or applicant list.</p>
           </div>
         ) : (
           <>
-            {/* Header */}
+            {/* ---------- Thread header ---------- */}
             <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
               <div className="flex items-center gap-3 min-w-0">
+                {/* Mobile-only back button, returning to the conversation list. */}
                 <button onClick={() => setActiveConv(null)} className="md:hidden text-[var(--text-muted)] hover:text-[var(--text-primary)]">
                   <ArrowLeft size={20} />
                 </button>
@@ -317,6 +420,12 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
                   </div>
                 </button>
               </div>
+              {/* Calling is hidden entirely if the admin's "calls"
+                  feature flag is off. Note both buttons currently call
+                  onStartCall with callType 'friend' regardless of
+                  whether the other side is a company — the 'interview'
+                  call type is only ever triggered from ApplicantsView.tsx's
+                  dedicated Interview button, not from here. */}
               {callsEnabled && (
                 <div className="flex items-center gap-2">
                   <button
@@ -337,7 +446,7 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
               )}
             </div>
 
-            {/* Messages */}
+            {/* ---------- Message bubbles ---------- */}
             <div className="flex-1 overflow-y-auto scroll-thin p-4 space-y-2">
               {messages.length === 0 ? (
                 <div className="flex h-full items-center justify-center">
@@ -356,6 +465,10 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
                         }`}
                       >
                         {m.body && <p className="text-sm">{m.body}</p>}
+                        {/* A 'quiz' attachment renders as a full
+                            interactive QuizCard (see QuizCard.tsx),
+                            instead of the plain "download file" button
+                            used for every other attachment type below. */}
                         {m.attachment_url && m.attachment_type === 'quiz' && (
                           <QuizCard assignmentId={m.attachment_url} isMine={isMine} />
                         )}
@@ -375,11 +488,17 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
                   );
                 })
               )}
+              {/* An empty marker div at the very bottom of the thread —
+                  `messagesEndRef.current?.scrollIntoView(...)` (called in
+                  loadMessages above) scrolls to THIS element, which is
+                  what makes the thread auto-scroll to the latest message. */}
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input */}
+            {/* ---------- Input bar ---------- */}
             <div className="border-t border-[var(--border)] p-3">
+              {/* A small preview chip showing the currently-attached
+                  file (before sending), with a way to remove it. */}
               {attachFile && (
                 <div className="mb-2 flex items-center gap-2 rounded-lg bg-[var(--surface)] px-3 py-2 animate-slide-down">
                   <Paperclip size={14} className="text-[var(--accent)]" />
@@ -398,6 +517,13 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
+                  // Enter sends the message; Shift+Enter is left free
+                  // (not intercepted) for a potential future multi-line
+                  // input — `e.preventDefault()` on plain Enter stops the
+                  // browser from doing anything else with that keypress
+                  // (this is a single-line <input>, so there's no
+                  // newline behavior to worry about here anyway, but it's
+                  // a safe habit).
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                   placeholder="Type a message…"
                   className="input-field flex-1"
@@ -416,6 +542,9 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
         )}
       </div>
 
+      {/* Clicking any avatar/name (in the list, or in the thread header)
+          opens the matching popup — a student's ProfileCardModal or a
+          company's CompanyProfileCardModal, whichever fits. */}
       {viewProfileId && (
         <ProfileCardModal
           userId={viewProfileId}

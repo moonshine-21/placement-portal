@@ -1,33 +1,54 @@
+// ============================================================================
+// src/views/ProfileView.tsx
+//
+// WHAT THIS FILE IS: the student's own editable profile page — name, bio,
+// CGPA, branch, skills, avatar, and banner — plus the "Set up a Company
+// Profile" button that upgrades this account into a company account (see
+// src/lib/companyActivation.ts and api/company-activate.ts, which is the
+// only actual place the role change is allowed to happen).
+// ============================================================================
+
 import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import { saveProfile, uploadPublicFile } from '@/lib/data';
-import { activateCompanyAccount } from '@/lib/payments';
+import { activateCompanyAccount } from '@/lib/companyActivation';
 import { useToast } from '@/lib/toast';
 import { User, Image as ImageIcon, Save, Plus, X, Building2, Upload, Trash2 } from 'lucide-react';
 import { AdminBadge } from '@/components/AdminBadge';
 import { Select } from '@/components/Select';
 import type { Profile } from '@/lib/supabase';
 
+// The fixed list of branches students can pick from — kept simple as a
+// hardcoded list rather than a database table, since this rarely changes.
 const BRANCHES = ['CSE', 'IT', 'ECE', 'EEE', 'AI', 'Mech'];
 
 export function ProfileView() {
   const { profile, refreshProfile } = useAuth();
   const { showToast } = useToast();
+  // One piece of state per editable field. These start empty and get
+  // filled in from `profile` once it loads (see the effect below) —
+  // that's why this component has BOTH `profile` (the saved database
+  // data) AND these separate pieces of state (the form's current,
+  // possibly-unsaved, editable values).
   const [fullName, setFullName] = useState('');
   const [bio, setBio] = useState('');
   const [cgpa, setCgpa] = useState('');
   const [branch, setBranch] = useState('');
-  const [skillsText, setSkillsText] = useState('');
-  const [skills, setSkills] = useState<string[]>([]);
+  const [skillsText, setSkillsText] = useState(''); // the raw text currently typed into the "add skills" input
+  const [skills, setSkills] = useState<string[]>([]); // the actual saved list of skill chips shown below it
   const [saving, setSaving] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState('');
   const [bannerUrl, setBannerUrl] = useState('');
 
+  // Whenever `profile` loads (or changes — e.g. after refreshProfile()),
+  // copy its values into this form's local editable state.
   useEffect(() => {
     if (profile) {
       setFullName(profile.full_name || '');
       setBio(profile.bio || '');
+      // Only show a CGPA value if it's actually set and greater than 0 —
+      // otherwise leave the field blank rather than showing a confusing "0".
       setCgpa(profile.cgpa != null && Number(profile.cgpa) > 0 ? String(profile.cgpa) : '');
       setBranch(profile.branch || '');
       const sk = profile.skills;
@@ -37,15 +58,28 @@ export function ProfileView() {
     }
   }, [profile]);
 
+  // Parses the comma-separated skills text box and adds each new skill to
+  // the list — this doesn't save to the database yet, just updates the
+  // LOCAL list of chips; the actual save happens when the whole form is submitted.
   const addSkills = () => {
     const parsed = skillsText.split(',').map((s) => s.trim()).filter(Boolean);
+    // `new Set([...skills, ...parsed])` combines the existing skills with
+    // the newly typed ones and automatically removes any duplicates (a
+    // Set can't contain the same value twice) — then `[...new Set(...)]`
+    // converts it back into a plain array, since that's what the rest of
+    // the component expects.
     const newSkills = [...new Set([...skills, ...parsed])];
     setSkills(newSkills);
-    setSkillsText('');
+    setSkillsText(''); // clear the input box after adding
   };
 
   const removeSkill = (s: string) => setSkills(skills.filter((sk) => sk !== s));
 
+  // Avatar/banner uploads save IMMEDIATELY on selection (unlike the rest
+  // of the form, which only saves when "Save Profile" is clicked) — this
+  // gives instant visual feedback and matches how most apps handle photo
+  // uploads (you don't expect to have to click a separate "save" button
+  // after picking a new profile picture).
   const handleAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !profile) return;
@@ -53,7 +87,7 @@ export function ProfileView() {
     if (url) {
       setAvatarUrl(url);
       await saveProfile(profile.id, profile.email, { avatar_url: url });
-      refreshProfile();
+      refreshProfile(); // tells the REST of the app (e.g. AppShell's header) about the new photo too
       showToast('Avatar updated', 'success');
     } else {
       showToast('Upload failed', 'error');
@@ -90,6 +124,9 @@ export function ProfileView() {
     showToast('Banner removed', 'success');
   };
 
+  // Saves the main form fields (name, bio, CGPA, branch, skills) — this
+  // is the one action that requires an explicit "Save Profile" click,
+  // unlike the avatar/banner uploads above.
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!profile) return;
@@ -113,18 +150,24 @@ export function ProfileView() {
 
   const [activating, setActivating] = useState(false);
 
+  // Triggers the (free, one-click) upgrade to a Company account — see
+  // src/lib/companyActivation.ts for the full explanation of why this
+  // has to go through a server call rather than just updating the role directly.
   const startActivation = async () => {
     setActivating(true);
     const result = await activateCompanyAccount();
     setActivating(false);
     if (result.success) {
-      await refreshProfile();
+      await refreshProfile(); // this is what makes App.tsx immediately notice the role change and switch to the company-side views
       showToast('Your Company account is ready!', 'success');
       return;
     }
     showToast(result.error, 'error');
   };
 
+  // If the profile hasn't loaded yet (e.g. a brief moment right after
+  // logging in), show a small loading state with a manual retry button
+  // rather than a blank/broken-looking form.
   if (!profile) {
     return (
       <div className="card flex flex-col items-center gap-3 py-16 text-center">
@@ -139,7 +182,11 @@ export function ProfileView() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-3">
+      {/* The main editable form takes up 2 of 3 columns on large
+          screens (`lg:col-span-2`); the sidebar (skills + company
+          upgrade) takes the remaining 1. */}
       <form onSubmit={handleSubmit} className="lg:col-span-2 space-y-6">
+        {/* ---------- Banner + avatar ---------- */}
         <div className="card overflow-hidden">
           <div className="relative h-32 rounded-t-2xl overflow-hidden border-b border-[var(--border)] bg-[var(--surface-hover)]">
             {bannerUrl ? (
@@ -151,6 +198,7 @@ export function ProfileView() {
               </div>
             )}
             <div className="absolute bottom-3 right-3 flex items-center gap-2">
+              {/* Remove button only shown once there's actually a banner to remove. */}
               {bannerUrl && (
                 <button
                   type="button"
@@ -171,6 +219,8 @@ export function ProfileView() {
               <div className="h-20 w-20 rounded-2xl border-4 border-[var(--bg-elevated)] bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] overflow-hidden flex items-center justify-center">
                 {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : <User size={28} className="text-white" />}
               </div>
+              {/* The small upload-icon button floats over the
+                  bottom-right corner of the avatar circle. */}
               <label className="absolute -bottom-1 -right-1 flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg bg-[var(--surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] hover:text-[var(--accent)]">
                 <Upload size={14} />
                 <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={handleAvatar} />
@@ -195,6 +245,7 @@ export function ProfileView() {
           </div>
         </div>
 
+        {/* ---------- Core academic fields ---------- */}
         <div className="card space-y-5">
         <h2 className="text-lg font-semibold">Academic Profile</h2>
 
@@ -221,6 +272,10 @@ export function ProfileView() {
 
         <div>
           <label className="mb-1.5 block text-sm font-medium text-[var(--text-secondary)]">Email</label>
+          {/* `readOnly` here — email is the account's LOGIN identity, so
+              changing it has to go through Supabase's proper
+              email-change flow (see SettingsView.tsx's changeEmail),
+              never just typed and saved here directly. */}
           <input type="email" value={profile?.email || ''} readOnly className="input-field" />
           <p className="mt-1 text-xs text-[var(--text-muted)]">This is your login email and can't be changed here.</p>
         </div>
@@ -231,6 +286,7 @@ export function ProfileView() {
         </div>
       </form>
 
+      {/* ---------- Sidebar: skills + company upgrade ---------- */}
       <div className="space-y-6">
         <div className="card space-y-4">
           <h2 className="text-lg font-semibold">Skills</h2>
@@ -241,6 +297,11 @@ export function ProfileView() {
                 type="text"
                 value={skillsText}
                 onChange={(e) => setSkillsText(e.target.value)}
+                // Pressing Enter in this field adds the skills, same as
+                // clicking the Add button — `e.preventDefault()` stops it
+                // from also submitting the WHOLE outer form (this input
+                // isn't inside the <form> above, but this guard is a
+                // simple safety habit worth keeping regardless).
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSkills(); } }}
                 placeholder="React, Python, SQL"
                 className="input-field"
@@ -265,6 +326,7 @@ export function ProfileView() {
           <p className="text-xs text-[var(--text-muted)]">Skills are auto-detected from your resume when you upload one.</p>
         </div>
 
+        {/* ---------- The company-account upgrade box ---------- */}
         <div className="card space-y-3">
           <div className="flex items-center gap-2">
             <Building2 size={20} className="text-[var(--accent)]" />

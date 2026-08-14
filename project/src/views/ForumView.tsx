@@ -1,3 +1,16 @@
+// ============================================================================
+// src/views/ForumView.tsx
+//
+// WHAT THIS FILE IS: a simple Reddit-style discussion forum — anyone can
+// start a post in one of four categories, anyone can reply, view counts
+// go up each time a post is opened. This ONE component handles BOTH the
+// "list of all posts" screen AND the "one post + its replies" screen —
+// which one is showing is controlled entirely by whether `selectedPost`
+// is set (see the early `if (selectedPost) { return ... }` near the top
+// of the component — this is a common lightweight way to handle two
+// related "pages" without needing a real router).
+// ============================================================================
+
 import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
@@ -21,18 +34,23 @@ export function ForumView() {
   const [posts, setPosts] = useState<ForumPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  // Which post is currently open in "detail" view — `null` means we're
+  // showing the plain list instead.
   const [selectedPost, setSelectedPost] = useState<ForumPost | null>(null);
   const [replies, setReplies] = useState<ForumReply[]>([]);
   const [replyText, setReplyText] = useState('');
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('all'); // which category tab is active on the list screen ('all' or one of CATEGORIES' keys)
 
-  // Form state
+  // "New post" form state.
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [category, setCategory] = useState('general');
   const [saving, setSaving] = useState(false);
 
   const loadPosts = async () => {
+    // Build the query conditionally: start with "every post, newest
+    // first," then ONLY add a category filter if a specific tab (not
+    // "All") is selected.
     let q = supabase.from('forum_posts').select('*').order('created_at', { ascending: false });
     if (filter !== 'all') q = q.eq('category', filter);
     const { data } = await q;
@@ -40,6 +58,7 @@ export function ForumView() {
     setLoading(false);
   };
 
+  // Re-run the query any time the selected category tab changes.
   useEffect(() => { loadPosts(); }, [filter]);
 
   const createPost = async (e: FormEvent) => {
@@ -59,8 +78,16 @@ export function ForumView() {
     loadPosts();
   };
 
+  // Switches to the "detail" view for one post, bumps its view counter,
+  // and loads its replies.
   const openPost = async (p: ForumPost) => {
     setSelectedPost(p);
+    // Increment the view count by exactly 1, based on whatever count was
+    // already displayed when this post was clicked. This is a simple
+    // "read-then-write" approach — good enough for a casual view counter,
+    // though technically if two people opened the exact same post at the
+    // literal same instant, one increment could be lost (not something
+    // worth engineering around for a view counter).
     await supabase.from('forum_posts').update({ views: p.views + 1 }).eq('id', p.id);
     const { data } = await supabase.from('forum_replies').select('*').eq('post_id', p.id).order('created_at', { ascending: true });
     setReplies((data as ForumReply[]) || []);
@@ -75,6 +102,9 @@ export function ForumView() {
       body: replyText.trim(),
     }).select().maybeSingle();
     if (error) { showToast('Could not reply: ' + error.message, 'error'); return; }
+    // Append the new reply straight to local state (rather than
+    // re-fetching the whole replies list from the server) — faster, and
+    // the server already gave us the full new row back via `.select()`.
     if (data) setReplies([...replies, data as ForumReply]);
     setReplyText('');
   };
@@ -83,7 +113,7 @@ export function ForumView() {
     if (!confirm('Delete this post and all replies?')) return;
     await supabase.from('forum_posts').delete().eq('id', id);
     showToast('Post deleted', 'info');
-    setSelectedPost(null);
+    setSelectedPost(null); // go back to the list, since the detail view we were on no longer exists
     loadPosts();
   };
 
@@ -94,6 +124,7 @@ export function ForumView() {
 
   const catMeta = (c: string) => CATEGORIES.find(x => x.key === c) || CATEGORIES[0];
 
+  // ---------- "Detail" screen: one post + its replies ----------
   if (selectedPost) {
     const meta = catMeta(selectedPost.category);
     return (
@@ -112,10 +143,14 @@ export function ForumView() {
                 <span>· {timeAgo(selectedPost.created_at)} · {selectedPost.views} views</span>
               </p>
             </div>
+            {/* Only the original poster can delete their own post. */}
             {profile?.id === selectedPost.author_id && (
               <button onClick={() => deletePost(selectedPost.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 flex-shrink-0"><Trash2 size={14} /></button>
             )}
           </div>
+          {/* `whitespace-pre-wrap` preserves any line breaks/spacing the
+              author typed in their post, instead of collapsing everything
+              onto one line the way HTML normally does with plain text. */}
           <p className="text-sm text-[var(--text-secondary)] mt-4 whitespace-pre-wrap">{selectedPost.body}</p>
         </div>
 
@@ -142,6 +177,7 @@ export function ForumView() {
               ))}
             </div>
           )}
+          {/* Reply box — pressing Enter sends it, same as a chat input. */}
           <div className="mt-4 flex items-center gap-2">
             <input value={replyText} onChange={(e) => setReplyText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendReply(); }} placeholder="Write a reply…" className="input-field flex-1" />
             <button onClick={sendReply} disabled={!replyText.trim()} className="btn-primary h-10 w-10 !px-0 flex-shrink-0"><Send size={18} /></button>
@@ -151,6 +187,7 @@ export function ForumView() {
     );
   }
 
+  // ---------- "List" screen: every post, filterable by category ----------
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -161,6 +198,7 @@ export function ForumView() {
         <button onClick={() => setShowForm(!showForm)} className="btn-primary btn-sm"><Plus size={14} /> New Post</button>
       </div>
 
+      {/* Category filter tabs, "All" plus one per CATEGORIES entry. */}
       <div className="flex gap-1.5 flex-wrap">
         <button onClick={() => setFilter('all')} className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${filter === 'all' ? 'bg-gradient-to-r from-[var(--accent)] to-[var(--accent-2)] text-white' : 'bg-[var(--surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}>All</button>
         {CATEGORIES.map(c => (
@@ -192,6 +230,8 @@ export function ForumView() {
         <div className="space-y-3">
           {posts.map((p, i) => {
             const meta = catMeta(p.category);
+            // Each entire card IS a button — clicking anywhere on it opens
+            // that post's detail view.
             return (
               <button key={p.id} onClick={() => openPost(p)} className="card card-hover w-full text-left animate-fade-in" style={{ animationDelay: `${i * 0.04}s` }}>
                 <div className="flex items-start justify-between gap-3">

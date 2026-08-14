@@ -1,3 +1,12 @@
+// ============================================================================
+// src/views/FriendsView.tsx
+//
+// WHAT THIS FILE IS: the student-to-student social page — search for
+// other students, send/accept/decline friend requests, see pending
+// requests in both directions, and manage your accepted friends list
+// (message, call, or remove them).
+// ============================================================================
+
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
@@ -14,6 +23,10 @@ type Props = {
   onStartCall: (calleeId: string, callType: 'friend' | 'interview') => void;
 };
 
+// A `friends` row only stores requester_id/recipient_id — this extended
+// shape adds "otherId/otherName/etc" fields, precomputed once when
+// loading, so the rest of the component doesn't have to keep figuring out
+// "which side of this row is ME vs the OTHER person" every time it renders.
 type FriendWithProfile = Friend & { otherId: string; otherName: string; otherAvatar: string; otherBranch: string; otherBio: string };
 
 export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Props) {
@@ -24,20 +37,32 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
-  const [incoming, setIncoming] = useState<FriendWithProfile[]>([]);
-  const [outgoing, setOutgoing] = useState<FriendWithProfile[]>([]);
+  const [incoming, setIncoming] = useState<FriendWithProfile[]>([]); // requests OTHERS sent TO the current user
+  const [outgoing, setOutgoing] = useState<FriendWithProfile[]>([]); // requests the current user sent to OTHERS
   const [accepted, setAccepted] = useState<FriendWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [viewProfileId, setViewProfileId] = useState<string | null>(null);
+  const [viewProfileId, setViewProfileId] = useState<string | null>(null); // whose ProfileCardModal is currently open, if any
 
+  // Calls a database function (`search_students`) rather than a plain
+  // `.select()` query — this exists specifically because ordinary student
+  // profiles have their email hidden by RLS from other students (see the
+  // matching migration comment in supabase/setup.sql), and this RPC is a
+  // narrow, safe exception that returns just enough info (name, avatar,
+  // branch) to search by, without exposing anything private.
   const searchStudents = async (q: string) => {
-    if (q.length < 2) { setSearchResults([]); return; }
+    if (q.length < 2) { setSearchResults([]); return; } // don't bother searching on a single character — too broad, too noisy
     setSearching(true);
     const { data } = await supabase.rpc('search_students', { q });
+    // Filter out the current user themselves from their own search results.
     setSearchResults(((data as SearchResult[]) || []).filter((r) => r.id !== user?.id));
     setSearching(false);
   };
 
+  // "Debounced" search: wait 300ms after the person STOPS typing before
+  // actually searching, rather than firing a database query on every
+  // single keystroke. If they type another character within that 300ms,
+  // the previous timer is cancelled (`clearTimeout`) and a new one
+  // starts — so a search only actually runs once they pause.
   useEffect(() => {
     if (searchQuery) {
       const t = setTimeout(() => searchStudents(searchQuery), 300);
@@ -45,9 +70,22 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
     }
   }, [searchQuery]);
 
+  // Loads all three lists (incoming, outgoing, accepted) at once. This is
+  // more involved than most `load` functions in this app because a
+  // friendship row doesn't clearly say "who's the OTHER person" from a
+  // fixed point of view — it depends on whether the CURRENT user is the
+  // requester or the recipient of that specific row, so four separate
+  // queries are needed to cover every combination.
   const loadAll = async () => {
     if (!user) return;
     setLoading(true);
+    // Run all four queries in parallel. Each one uses Supabase's
+    // "embedded resource" syntax — e.g. `profiles!friends_requester_id_fkey(...)`
+    // — to fetch the OTHER person's profile fields (name, avatar, branch,
+    // bio) joined directly into the same query, using the specific
+    // foreign key relationship named in the database schema to
+    // disambiguate WHICH of the two profile links (requester or
+    // recipient) we mean.
     const [incomingRes, outgoingRes, accepted1Res, accepted2Res] = await Promise.all([
       supabase.from('friends').select('id, requester_id, status, created_at, profiles!friends_requester_id_fkey(full_name, avatar_url, branch, bio)').eq('recipient_id', user.id).eq('status', 'pending'),
       supabase.from('friends').select('id, recipient_id, status, profiles!friends_recipient_id_fkey(full_name, avatar_url, branch, bio)').eq('requester_id', user.id).eq('status', 'pending'),
@@ -55,18 +93,10 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
       supabase.from('friends').select('id, recipient_id, profiles!friends_recipient_id_fkey(full_name, avatar_url, branch, bio)').eq('requester_id', user.id).eq('status', 'accepted'),
     ]);
 
-    // These queries embed `profiles` via a join hint (`profiles!friends_..._fkey`)
-    // that depends on a specific foreign key existing between `friends` and
-    // `profiles` — see migration 20260814020000_fix_friends_fkeys.sql for why
-    // that wasn't always true. If that migration hasn't been run yet, these
-    // fail with a "could not find a relationship" error and every list below
-    // silently renders empty — surfacing it here makes that failure mode
-    // loud instead of just looking like "friend requests don't work".
-    if (incomingRes.error) console.error('FriendsView: failed to load incoming requests (has the friends-fkey migration been run?):', incomingRes.error);
-    if (outgoingRes.error) console.error('FriendsView: failed to load outgoing requests (has the friends-fkey migration been run?):', outgoingRes.error);
-    if (accepted1Res.error) console.error('FriendsView: failed to load friends list (has the friends-fkey migration been run?):', accepted1Res.error);
-    if (accepted2Res.error) console.error('FriendsView: failed to load friends list (has the friends-fkey migration been run?):', accepted2Res.error);
-
+    // A shared helper that turns the raw joined rows into the
+    // FriendWithProfile shape described above. `isOutgoing` tells it
+    // whether "the other person" is in the recipient_id or requester_id
+    // field for THIS particular batch of rows.
     const mapFn = (rows: any[], isOutgoing: boolean) => (rows || []).map((r) => {
       const p = r.profiles || {};
       const otherId = isOutgoing ? r.recipient_id : r.requester_id;
@@ -75,6 +105,8 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
 
     setIncoming(mapFn(incomingRes.data || [], false));
     setOutgoing(mapFn(outgoingRes.data || [], true));
+    // Accepted friendships can exist with the current user as EITHER
+    // side, so both accepted queries' results are combined into one list.
     setAccepted([...mapFn(accepted1Res.data || [], false), ...mapFn(accepted2Res.data || [], true)]);
     setLoading(false);
   };
@@ -83,6 +115,10 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
     loadAll();
     if (!user) return;
 
+    // Live updates: reload the lists any time a friends-table row
+    // involving this user is inserted or updated (a new request arrives,
+    // one gets accepted, etc), from anyone, without needing to refresh
+    // the page.
     const channel = supabase
       .channel('friends-realtime')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'friends', filter: `recipient_id=eq.${user.id}` }, () => loadAll())
@@ -94,6 +130,11 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
     return () => { supabase.removeChannel(channel); };
   }, [user]);
 
+  // Sends a new friend request, after first checking whether some
+  // relationship (in either direction) already exists between these two
+  // people — this gives a clearer, more specific message ("already
+  // friends" vs "request already sent" vs "they already sent YOU one")
+  // than just letting the database's uniqueness rule reject a duplicate blindly.
   const sendRequest = async (recipientId: string) => {
     if (!user) return;
     const { data: existing } = await supabase
@@ -110,6 +151,11 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
 
     const { error } = await supabase.from('friends').insert({ requester_id: user.id, recipient_id: recipientId, status: 'pending' });
     if (error) {
+      // Belt-and-suspenders: even with the manual check above, a race
+      // condition (two requests sent within the same instant, from two
+      // different tabs/devices) could still hit the database's own
+      // uniqueness rule — code '23505' catches that and shows the same
+      // friendly message instead of a raw database error.
       if (error.code === '23505') { showToast('Request already sent', 'info'); return; }
       showToast('Could not send request', 'error'); return;
     }
@@ -123,6 +169,8 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
   };
 
   const acceptFriend = async (friendRowId: string) => {
+    // Need to know who the ORIGINAL requester was, so we can notify
+    // specifically them that their request was accepted.
     const { data: row } = await supabase.from('friends').select('requester_id').eq('id', friendRowId).maybeSingle();
     await supabase.from('friends').update({ status: 'accepted', updated_at: new Date().toISOString() }).eq('id', friendRowId);
     if (row) {
@@ -136,6 +184,13 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
     loadAll();
   };
 
+  // Declining an incoming request, cancelling an outgoing one, and
+  // removing an accepted friend are all, technically, the exact same
+  // database action — delete the row — just triggered from different
+  // places with different wording/confirmation. They're kept as separate
+  // named functions purely for clarity in the JSX below (`onClick={() =>
+  // declineFriend(f.id)}` reads clearly; a single generic
+  // `deleteFriendRow` used in three different contexts would read less clearly).
   const declineFriend = async (friendRowId: string) => {
     await supabase.from('friends').delete().eq('id', friendRowId);
     showToast('Request declined', 'info');
@@ -155,6 +210,8 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
     loadAll();
   };
 
+  // A small reusable avatar helper, local to this file (same "photo, or
+  // colored initials" pattern used in several other components).
   const FriendAvatar = ({ name, url, size = 40 }: { name: string; url: string; size?: number }) =>
     url ? <img src={url} alt="" style={{ width: size, height: size }} className="rounded-xl object-cover flex-shrink-0" /> : (
       <div style={{ width: size, height: size }} className="flex items-center justify-center rounded-xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] text-xs font-bold text-white flex-shrink-0">
@@ -164,7 +221,7 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
 
   return (
     <div className="space-y-6">
-      {/* Search */}
+      {/* ---------- Search ---------- */}
       <div className="card">
         <div className="mb-4 flex items-center gap-2">
           <Search size={18} className="text-[var(--accent)]" />
@@ -201,7 +258,10 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
         )}
       </div>
 
-      {/* Pending requests */}
+      {/* ---------- Pending requests (both directions) ---------- */}
+      {/* This whole section only appears at all if there's at least one
+          request in either direction — no empty "Pending Requests"
+          section shown otherwise. */}
       {(incoming.length > 0 || outgoing.length > 0) && (
         <div className="card">
           <div className="mb-4 flex items-center gap-2">
@@ -250,7 +310,7 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
         </div>
       )}
 
-      {/* Friends list */}
+      {/* ---------- Accepted friends list ---------- */}
       <div className="card">
         <div className="mb-4 flex items-center gap-2">
           <Users size={18} className="text-[var(--accent)]" />
@@ -280,6 +340,8 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
                   <button onClick={() => { onNavigate('messages'); onOpenConversation(f.otherId, f.otherName); }} className="btn-ghost btn-sm flex-1">
                     <MessageSquare size={14} /> Message
                   </button>
+                  {/* Calling is hidden entirely (not just disabled) if the
+                      admin has turned the "calls" feature flag off. */}
                   {callsEnabled && (
                     <button onClick={() => onStartCall(f.otherId, 'friend')} className="btn-primary btn-sm flex-1">
                       <Phone size={14} /> Call
@@ -295,6 +357,9 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
         )}
       </div>
 
+      {/* Clicking any name/avatar anywhere on this page opens the same
+          shared ProfileCardModal, passed the callbacks it needs to also
+          support "Message" and "Call" directly from within the popup. */}
       {viewProfileId && (
         <ProfileCardModal
           userId={viewProfileId}

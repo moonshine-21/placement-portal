@@ -1,3 +1,14 @@
+// ============================================================================
+// src/views/CompanyViews.tsx
+//
+// WHAT THIS FILE IS: two related company-side pages, kept in one file
+// since they're both simple and both about "managing your own company
+// account": `CompanyOverviewView` (a stats dashboard — applicant counts,
+// hiring progress, recent applicants) and `CompanyProfileEditorView` (the
+// form for editing your company's public profile — logo, banner, bio,
+// contact info).
+// ============================================================================
+
 import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
@@ -6,6 +17,9 @@ import { uploadPublicFile, saveProfile } from '@/lib/data';
 import { Building2, Upload, Save, Users, TrendingUp, Award, Briefcase, Trash2, Image as ImageIcon } from 'lucide-react';
 import type { CompanyProfile, CompanyApplication } from '@/lib/supabase';
 
+// ============================================================================
+// CompanyOverviewView — the company's "Dashboard" landing page
+// ============================================================================
 export function CompanyOverviewView({ onNavigate }: { onNavigate: (view: string) => void }) {
   const { profile } = useAuth();
   const [apps, setApps] = useState<CompanyApplication[]>([]);
@@ -16,14 +30,27 @@ export function CompanyOverviewView({ onNavigate }: { onNavigate: (view: string)
   useEffect(() => {
     (async () => {
       if (!profile) return;
+      // Fetch this company's full application list.
       const { data: a } = await supabase.from('company_applications').select('*').eq('company_id', profile.id).order('created_at', { ascending: false });
       const all = (a as CompanyApplication[]) || [];
       setApps(all);
+
+      // Hiring progress is a COMBINATION of two sources: the company's
+      // own overall "employees needed/have" numbers (set directly on
+      // their company_profiles row) PLUS the sum of every individual
+      // job's own needed/have counts (see JobsView.tsx). Both get added
+      // together here into one combined total.
       const { data: cp } = await supabase.from('company_profiles').select('employees_needed, employees_have').eq('id', profile.id).maybeSingle();
       const { data: jobs } = await supabase.from('jobs').select('employees_needed, employees_have').eq('company_id', profile.id);
       let have = (cp as CompanyProfile)?.employees_have || 0;
       let need = (cp as CompanyProfile)?.employees_needed || 0;
       (jobs || []).forEach((j: any) => { have += j.employees_have || 0; need += j.employees_needed || 0; });
+
+      // Sanity check: if the ACTUAL count of applications marked "hired"
+      // is somehow higher than the manually-tracked "have" number (e.g.
+      // the company forgot to update their employees_have field), trust
+      // the real application data instead — this keeps the displayed
+      // number from looking obviously wrong/stale.
       const hiredCount = all.filter((a) => a.status === 'hired').length;
       if (hiredCount > have) have = hiredCount;
       setHired(have); setNeeded(need);
@@ -33,6 +60,8 @@ export function CompanyOverviewView({ onNavigate }: { onNavigate: (view: string)
 
   if (loading) return <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{[1, 2, 3, 4].map((i) => <div key={i} className="skeleton h-36 rounded-2xl" />)}</div>;
 
+  // Everything below this line is plain arithmetic on the data already
+  // loaded above — no more database calls needed.
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const newCount = apps.filter((a) => new Date(a.created_at).getTime() >= weekAgo).length;
   const shortlisted = apps.filter((a) => a.status === 'shortlisted').length;
@@ -40,6 +69,7 @@ export function CompanyOverviewView({ onNavigate }: { onNavigate: (view: string)
 
   return (
     <div className="space-y-6">
+      {/* Four stat cards across the top. */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 stagger">
         <div className="card card-hover">
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent)]/15 text-[var(--accent)]"><Users size={20} /></div>
@@ -66,6 +96,8 @@ export function CompanyOverviewView({ onNavigate }: { onNavigate: (view: string)
         </div>
       </div>
 
+      {/* A quick preview of just the 5 most recent applicants, with a
+          shortcut button to the full Applicants page. */}
       <div className="card">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold">Recent Applicants</h2>
@@ -96,9 +128,13 @@ export function CompanyOverviewView({ onNavigate }: { onNavigate: (view: string)
   );
 }
 
+// ============================================================================
+// CompanyProfileEditorView — edit the company's own public profile
+// ============================================================================
 export function CompanyProfileEditorView() {
   const { profile, refreshProfile } = useAuth();
   const { showToast } = useToast();
+  // One piece of state per form field.
   const [orgName, setOrgName] = useState('');
   const [industry, setIndustry] = useState('');
   const [bio, setBio] = useState('');
@@ -110,6 +146,8 @@ export function CompanyProfileEditorView() {
   const [avatarUrl, setAvatarUrl] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Load the existing company_profiles row (if any) and pre-fill every
+  // field with it, so the form opens showing whatever's already saved.
   useEffect(() => {
     (async () => {
       if (!profile) return;
@@ -123,6 +161,10 @@ export function CompanyProfileEditorView() {
     })();
   }, [profile]);
 
+  // The banner and logo images are BOTH uploaded and saved IMMEDIATELY
+  // when picked (not held until the "Save" button is clicked) — this is
+  // deliberate: image uploads are their own separate, independent action
+  // from the rest of the text-field form below.
   const handleBanner = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !profile) return;
@@ -141,6 +183,11 @@ export function CompanyProfileEditorView() {
     if (url) {
       setAvatarUrl(url);
       await supabase.from('company_profiles').upsert({ id: profile.id, avatar_url: url }, { onConflict: 'id' });
+      // The company's LOGO is also mirrored onto their base `profiles`
+      // row's avatar_url — this is what makes their logo show up
+      // consistently in places that only know about the generic
+      // `profiles` table (like chat messages), not just on their
+      // dedicated company profile page.
       await saveProfile(profile.id, profile.email, { avatar_url: url });
       refreshProfile();
       showToast('Logo updated', 'success');
@@ -163,6 +210,8 @@ export function CompanyProfileEditorView() {
     showToast('Logo removed', 'success');
   };
 
+  // Saves all the TEXT fields at once (the images already save
+  // themselves independently, as described above).
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!profile) return;
@@ -171,12 +220,17 @@ export function CompanyProfileEditorView() {
     const { error } = await supabase.from('company_profiles').upsert(payload, { onConflict: 'id' });
     setSaving(false);
     if (error) { showToast('Could not save: ' + error.message, 'error'); return; }
+    // If the organization's display name changed, also update their
+    // shared `profiles.full_name` — this is what shows up as the
+    // "sender name" in chat and elsewhere outside the company profile
+    // page itself.
     if (orgName && orgName !== profile.full_name) { await saveProfile(profile.id, profile.email, { full_name: orgName }); refreshProfile(); }
     showToast('Company profile saved — it is now visible to students', 'success');
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* ---------- Banner + logo editor ---------- */}
       <div className="card overflow-hidden">
         <div className="relative h-32 rounded-t-2xl overflow-hidden border-b border-[var(--border)] bg-[var(--surface-hover)]">
           {bannerUrl ? (
@@ -188,6 +242,7 @@ export function CompanyProfileEditorView() {
             </div>
           )}
           <div className="absolute bottom-3 right-3 flex items-center gap-2">
+            {/* Remove button only shown if there's currently a banner to remove. */}
             {bannerUrl && (
               <button
                 type="button"
@@ -204,6 +259,9 @@ export function CompanyProfileEditorView() {
           </div>
         </div>
         <div className="px-6 pb-6">
+          {/* The logo circle overlaps the bottom edge of the banner
+              (`-mt-10`), a common profile-card visual pattern also seen
+              in CompanyProfileCardModal.tsx. */}
           <div className="relative -mt-10 mb-4 inline-block">
             <div className="h-20 w-20 rounded-2xl border-4 border-[var(--bg-elevated)] bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] overflow-hidden flex items-center justify-center">
               {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : <Building2 size={28} className="text-white" />}
@@ -227,6 +285,7 @@ export function CompanyProfileEditorView() {
         </div>
       </div>
 
+      {/* ---------- Text fields ---------- */}
       <div className="card space-y-5">
         <h2 className="text-lg font-semibold">Company Details</h2>
         <div className="grid gap-4 sm:grid-cols-2">

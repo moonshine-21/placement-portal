@@ -1,3 +1,12 @@
+// ============================================================================
+// src/pages/LoginPage.tsx
+//
+// WHAT THIS FILE IS: the sign-in / sign-up screen — the single form that
+// switches between "Sign In" and "Create Account" modes (rather than
+// being two separate pages), plus a "Sign in with Google" option and a
+// "forgot password" flow.
+// ============================================================================
+
 import { useState, type FormEvent } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/lib/toast';
@@ -5,15 +14,17 @@ import { Eye, EyeOff, GraduationCap, ArrowRight } from 'lucide-react';
 
 export function LoginPage() {
   const { showToast } = useToast();
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin'); // which of the two forms is currently showing
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
+  const [fullName, setFullName] = useState(''); // only used/shown in signup mode
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [resetSent, setResetSent] = useState(false);
+  const [resetSent, setResetSent] = useState(false); // shows a confirmation message after requesting a password reset
 
+  // Handles the form submission for BOTH modes — which branch runs
+  // depends on the current `mode` state.
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
@@ -24,6 +35,9 @@ export function LoginPage() {
       setLoading(false);
       if (err) {
         const msg = err.message || '';
+        // Supabase's own rate-limit error messages vary in wording — this
+        // regex catches several different phrasings and shows one
+        // consistent, friendlier message instead of Supabase's raw text.
         if (/rate limit|too many|over the limit|for security purposes|429/i.test(msg)) {
           setError('Too many attempts in a short time. Wait a minute and try again.');
         } else {
@@ -32,10 +46,16 @@ export function LoginPage() {
         return;
       }
       if (data.session) showToast('Welcome back!', 'success');
+      // (No further action needed here on success — App.tsx's `useAuth()`
+      // will automatically notice the new session and swap to the real app.)
     } else {
+      // Sign-up mode.
       const { data, error: err } = await supabase.auth.signUp({
         email,
         password,
+        // `options.data` here becomes the account's "user_metadata" — this
+        // is where `full_name` comes from when src/lib/auth.tsx creates
+        // the matching Profile row for a brand new user.
         options: { data: { full_name: fullName } },
       });
       setLoading(false);
@@ -50,18 +70,31 @@ export function LoginPage() {
         }
         return;
       }
+      // A subtle Supabase quirk: if someone tries to sign up with an email
+      // that ALREADY has an account, Supabase sometimes returns success
+      // (no `err`) rather than an error — but the returned user's
+      // `identities` array will be empty, which is the actual signal that
+      // this wasn't really a new signup. This check catches that case.
       if (!err && data.user && data.user.identities && data.user.identities.length === 0) {
         setError('An account with this email already exists. Please sign in instead.');
         return;
       }
       if (data.session) {
+        // Some Supabase projects are configured to skip email
+        // confirmation — in that case, signup immediately logs them in.
         showToast('Account created!', 'success');
       } else if (data.user) {
+        // The more common case: they need to click a confirmation link in
+        // their email before they can actually log in.
         showToast('Account created — check your email to confirm, then sign in.', 'info');
       }
     }
   };
 
+  // Starts Google's "Sign in with Google" flow — this redirects the whole
+  // browser tab away to Google's own login page, then back to this site
+  // once they've approved it (`redirectTo: window.location.origin` is
+  // what tells Google where to send them back to).
   const handleGoogle = async () => {
     const { error: err } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -70,6 +103,7 @@ export function LoginPage() {
     if (err) setError(err.message);
   };
 
+  // Sends a "reset your password" email, if the person forgot their password.
   const handleForgot = async () => {
     if (!email) {
       setError('Enter your email above first, then tap "Forgot password?".');
@@ -98,6 +132,8 @@ export function LoginPage() {
           <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] shadow-lg">
             <GraduationCap size={32} className="text-white" />
           </div>
+          {/* The heading text itself changes depending on which mode
+              we're in, without needing two separate page components. */}
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
             {mode === 'signin' ? 'Smart Placement Cell' : 'Create Account'}
           </h1>
@@ -121,7 +157,10 @@ export function LoginPage() {
         )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          {/* Full name — signup only */}
+          {/* Full name — signup only. This whole block simply doesn't
+              exist in the page's HTML at all while in signin mode
+              (rather than existing but hidden), so there's no leftover
+              hidden field confusing the browser's autofill. */}
           {mode === 'signup' && (
             <div className="animate-slide-down">
               <label className="mb-2 block text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
@@ -168,6 +207,9 @@ export function LoginPage() {
                 placeholder="At least 6 characters"
                 required
                 minLength={6}
+                // A nice touch: hints the browser's password manager
+                // differently depending on mode — "fill in my saved
+                // password" for signin, "suggest/save a NEW password" for signup.
                 autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
                 className="input-field pr-12"
               />
@@ -181,6 +223,7 @@ export function LoginPage() {
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
+            {/* "Forgot password?" only makes sense in sign-in mode. */}
             {mode === 'signin' && (
               <button
                 type="button"
@@ -211,7 +254,9 @@ export function LoginPage() {
           <div className="h-px flex-1" style={{ background: 'var(--border)' }} />
         </div>
 
-        {/* Google */}
+        {/* Google — the multicolor "G" logo below is drawn directly as
+            raw SVG shapes (Google's official four-color mark), rather
+            than loading an external image file. */}
         <button onClick={handleGoogle} className="btn-ghost btn-lg w-full">
           <svg viewBox="0 0 24 24" width="20" height="20" className="flex-shrink-0">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -222,14 +267,15 @@ export function LoginPage() {
           Continue with Google
         </button>
 
-        {/* Toggle mode */}
+        {/* Toggle mode — switches between "Sign In" and "Create Account"
+            without navigating to a different page. */}
         <p className="mt-6 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
           {mode === 'signin' ? 'New student?' : 'Already have an account?'}{' '}
           <button
             onClick={() => {
               setMode(mode === 'signin' ? 'signup' : 'signin');
-              setError('');
-              setResetSent(false);
+              setError('');       // clear any leftover error from the previous mode
+              setResetSent(false); // and any leftover "reset email sent" message
             }}
             className="font-semibold hover:underline"
             style={{ color: 'var(--accent)' }}

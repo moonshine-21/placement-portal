@@ -1,6 +1,8 @@
+// ============================================================================
 // Vercel Serverless Function — POST /api/track-session
 //
-// Called once per app load from the browser (src/lib/sessionGuard.tsx),
+// WHAT THIS FILE IS: the server-side other half of
+// src/lib/sessionGuard.tsx. Called once per app load from the browser,
 // signed in or not. This is the ONLY writer of `device_sessions`, and it
 // uses SUPABASE_SERVICE_ROLE_KEY (server-only, never shipped to the
 // browser) so it bypasses RLS — a visitor's browser can send us its own
@@ -14,12 +16,19 @@
 // Variables (Project Settings → Environment Variables). Find the value in
 // your Supabase project under Settings → API → service_role secret key.
 // Never prefix it with VITE_ — that would bundle it into client JS.
+// ============================================================================
 
 import { createClient } from '@supabase/supabase-js';
 import { rateLimit, sweepIfDue, clientIp } from './_lib/rateLimit.js';
 
 export const config = { runtime: 'edge' };
 
+// What the browser sends: the device fingerprint (see
+// src/lib/deviceFingerprint.ts), the current user's ID if they're logged
+// in, and the full raw details behind the fingerprint (for the admin
+// panel's device-session log — useful for a human reviewing suspicious
+// activity, even though only the fingerprint itself is used for matching
+// against the ban lists).
 type ReqBody = {
   fingerprint?: string;
   userId?: string | null;
@@ -37,6 +46,12 @@ type ReqBody = {
   };
 };
 
+// A basic sanity check on the fingerprint we're sent: it should be a
+// string of 32-128 hex characters (matching what sha256Hex() in
+// deviceFingerprint.ts actually produces). This is a "type guard" —
+// TypeScript's special syntax `fp is string` means that anywhere this
+// function returns `true`, TypeScript will treat `fp` as confirmed to be
+// a string from that point on, without needing another manual check.
 function isValidFingerprint(fp: unknown): fp is string {
   return typeof fp === 'string' && /^[a-f0-9]{32,128}$/i.test(fp);
 }
@@ -79,31 +94,51 @@ export default async function handler(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ error: 'Invalid fingerprint' }), { status: 400 });
   }
   const fingerprint = body.fingerprint;
+  // Only accept userId if it's actually a non-empty string — otherwise
+  // treat this as an anonymous (not-logged-in) visit.
   const userId = typeof body.userId === 'string' && body.userId ? body.userId : null;
   const details = body.details || {};
 
+  // A fresh service-role connection for this one request (see the
+  // matching explanation in api/_lib/callerAuth.ts's adminClient — same
+  // idea, just built directly here instead of imported, since this file
+  // predates that shared helper).
   const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
+  // Check BOTH ban lists at once (IP-based bans and device-fingerprint
+  // bans are two separate, independent block-lists an admin can add to).
+  // `Promise.all` runs both database lookups in parallel rather than
+  // waiting for one to finish before starting the other.
   const [ipBan, deviceBan] = await Promise.all([
     admin.from('banned_ips').select('reason').eq('ip_address', ip).maybeSingle(),
     admin.from('banned_devices').select('reason').eq('device_fingerprint', fingerprint).maybeSingle(),
   ]);
 
+  // Banned if EITHER list has a match.
   const banned = Boolean(ipBan.data || deviceBan.data);
   const reason = ipBan.data?.reason || deviceBan.data?.reason || '';
 
   // Log the session regardless of ban status — seeing repeated banned
   // attempts (and from which IP/device) is itself useful admin signal.
   try {
+    // Look for an existing session row matching this exact
+    // IP + fingerprint + user combination (a returning visitor), so we
+    // update it instead of creating a fresh duplicate row every single
+    // page load.
     let existingQuery = admin
       .from('device_sessions')
       .select('id, hit_count')
       .eq('ip_address', ip)
       .eq('device_fingerprint', fingerprint);
+    // `.is('user_id', null)` is the correct way to match "user_id is
+    // NULL" in a database query — a plain `.eq('user_id', null)` doesn't
+    // work the same way in SQL, so this distinction matters.
     existingQuery = userId ? existingQuery.eq('user_id', userId) : existingQuery.is('user_id', null);
     const { data: existing } = await existingQuery.maybeSingle();
 
     if (existing) {
+      // Seen this exact combination before — just bump its "last seen"
+      // timestamp and increment the visit counter.
       await admin
         .from('device_sessions')
         .update({
@@ -115,6 +150,7 @@ export default async function handler(req: Request): Promise<Response> {
         })
         .eq('id', existing.id);
     } else {
+      // First time seeing this combination — create a new row.
       await admin.from('device_sessions').insert({
         user_id: userId,
         ip_address: ip,
@@ -129,6 +165,7 @@ export default async function handler(req: Request): Promise<Response> {
     console.error('[track-session] failed to upsert device_sessions:', err);
   }
 
+  // Tell the browser whether to show the "Access Restricted" screen.
   return new Response(JSON.stringify({ banned, reason }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },

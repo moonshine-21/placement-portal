@@ -1,3 +1,21 @@
+// ============================================================================
+// src/views/LeaderboardView.tsx
+//
+// WHAT THIS FILE IS: a ranking page showing how a student stacks up
+// against OTHER STUDENTS — but deliberately scoped to just themself plus
+// their accepted friends (not the whole college), both for privacy and to
+// make the competition feel personal/friendly rather than a public
+// popularity contest.
+//
+// Uses `supabase.rpc(...)` — an "RPC" (Remote Procedure Call) is how you
+// call a function that lives INSIDE the database itself (written in SQL,
+// defined in supabase/setup.sql as `get_leaderboard`), rather than
+// building the equivalent query by hand here in JavaScript. This is done
+// for performance: ranking every student by several combined factors is
+// exactly the kind of heavy calculation a database is much faster at than
+// fetching everyone's raw data and computing it in the browser.
+// ============================================================================
+
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
@@ -12,19 +30,27 @@ export function LeaderboardView() {
   useEffect(() => {
     if (!user) return;
     (async () => {
-      // Accepted friends only (either direction)
+      // Step 1: find every student this user is ACCEPTED friends with
+      // (checking both directions, same pattern explained in more depth
+      // in ProfileCardModal.tsx). We always include the user's own ID
+      // too, so they appear on their own leaderboard.
       const { data: friendRows } = await supabase
         .from('friends')
         .select('requester_id, recipient_id, status')
         .or(`requester_id.eq.${user.id},recipient_id.eq.${user.id}`)
         .eq('status', 'accepted');
 
+      // A `Set` here (rather than a plain array) makes the later
+      // `.filter(e => friendIds.has(...))` check fast, and automatically
+      // avoids duplicate IDs.
       const friendIds = new Set<string>([user.id]);
       (friendRows || []).forEach((f: { requester_id: string; recipient_id: string }) => {
         friendIds.add(f.requester_id);
         friendIds.add(f.recipient_id);
       });
 
+      // Step 2: call the database function to get the FULL ranked list of
+      // (up to) the top 100 students site-wide, already sorted best-first.
       const { data, error } = await supabase.rpc('get_leaderboard', { limit_count: 100 });
       if (error) {
         console.error('Leaderboard load failed:', error);
@@ -33,7 +59,11 @@ export function LeaderboardView() {
       }
 
       const all = (data as LeaderboardEntry[]) || [];
-      // Keep only self + accepted friends, then re-rank within that circle
+      // Step 3: narrow that full site-wide list down to JUST this
+      // person + their friends, then re-number the rank (1st, 2nd, 3rd...)
+      // starting fresh WITHIN that smaller circle — otherwise a friend who
+      // was, say, #47 site-wide would confusingly still show "#47" even
+      // though they might be #2 among just this friend group.
       const filtered = all
         .filter((e) => friendIds.has(e.student_id))
         .map((e, i) => ({ ...e, rank: i + 1 }));
@@ -63,9 +93,13 @@ export function LeaderboardView() {
     );
   }
 
+  // Split into the top 3 (shown as big highlighted "podium" cards) and
+  // everyone else (shown as a plain compact table below).
   const top3 = entries.slice(0, 3);
   const rest = entries.slice(3);
 
+  // Gold/silver/bronze medal icons for the top 3 ranks; a plain "#4",
+  // "#5", etc for everyone else.
   const rankIcon = (rank: number) => {
     if (rank === 1) return <Medal size={20} className="text-amber-400" />;
     if (rank === 2) return <Medal size={20} className="text-slate-400" />;
@@ -81,11 +115,17 @@ export function LeaderboardView() {
         <span className="text-sm text-[var(--text-muted)]">· You and your friends only</span>
       </div>
 
+      {/* ---------- Top 3 "podium" cards ---------- */}
       {top3.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-3 stagger">
           {top3.map((e, i) => (
             <div
               key={e.student_id}
+              // The #1 spot gets a slightly larger size (`sm:scale-105`)
+              // and a subtle gold glow ring, to visually stand out from
+              // 2nd/3rd place. Whichever card belongs to the CURRENT
+              // viewer also gets a highlighted accent-colored border,
+              // regardless of rank.
               className={`card text-center ${i === 0 ? 'sm:scale-105 ring-2 ring-amber-400/30' : ''} ${e.student_id === user?.id ? 'border-[var(--accent)]/40' : ''}`}
               style={{ animationDelay: `${i * 0.1}s` }}
             >
@@ -116,8 +156,12 @@ export function LeaderboardView() {
         </div>
       )}
 
+      {/* ---------- Everyone else, as a compact table ---------- */}
       {rest.length > 0 && (
         <div className="card">
+          {/* `overflow-x-auto` lets this table scroll sideways on a
+              narrow phone screen instead of squishing every column
+              illegibly small. */}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -148,6 +192,10 @@ export function LeaderboardView() {
                     </td>
                     <td className="py-3">
                       <span className="inline-flex items-center gap-1 text-[var(--text-secondary)]"><Target size={12} className="text-emerald-400" /> {e.total_matches}</span>
+                      {/* Only show the "N high" callout if they actually
+                          have at least one high-scoring match — otherwise
+                          this would just clutter the row with "0 high"
+                          for most students. */}
                       {e.high_matches > 0 && <span className="ml-2 inline-flex items-center gap-1 text-xs text-emerald-400"><TrendingUp size={10} /> {e.high_matches} high</span>}
                     </td>
                     <td className="py-3">

@@ -1,23 +1,41 @@
+// ============================================================================
+// src/components/ProfileCardModal.tsx
+//
+// WHAT THIS FILE IS: the popup shown when you click on a STUDENT's name or
+// avatar anywhere in the app — like CompanyProfileCardModal, but for
+// people rather than companies, and with much more going on: it also
+// shows their projects, mutual friends, and — the main extra complexity —
+// the current friendship status between the viewer and this person
+// (not friends yet / request sent / request received / already friends),
+// with buttons that change based on which state it's in.
+// ============================================================================
+
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/lib/toast';
 import { X, MessageSquare, Phone, GraduationCap, Award, UserPlus, Check, Clock, Users, FolderGit2, ExternalLink, Code2, ChevronDown, ChevronUp } from 'lucide-react';
 import { AdminBadge } from '@/components/AdminBadge';
-import { Portal } from '@/components/Portal';
 import type { Profile, Friend, StudentProject } from '@/lib/supabase';
 
 type Props = {
-  userId: string;
+  userId: string;                                    // whose profile to show
   onClose: () => void;
-  onMessage?: (userId: string, name: string) => void;
-  onCall?: (userId: string) => void;
+  onMessage?: (userId: string, name: string) => void; // optional — not every screen that opens this modal wants a "Message" button
+  onCall?: (userId: string) => void;                  // optional — likewise for "Call"
 };
 
+// The full set of possible friendship states between the viewer and this profile.
 type FriendStatus = 'loading' | 'self' | 'none' | 'outgoing' | 'incoming' | 'accepted';
 
+// A trimmed-down shape used just for showing mutual friends' avatars/names.
 type MutualFriend = { id: string; full_name: string; avatar_url: string };
 
+// Gets the full list of user IDs that `uid` is currently ACCEPTED friends
+// with. Friendship rows can have either person as the "requester" or
+// "recipient" — this checks both directions and combines the results,
+// since being friends is symmetric even though the database row itself
+// remembers who originally sent the request.
 async function getAcceptedFriendIds(uid: string): Promise<string[]> {
   const [a, b] = await Promise.all([
     supabase.from('friends').select('recipient_id').eq('requester_id', uid).eq('status', 'accepted'),
@@ -31,17 +49,17 @@ async function getAcceptedFriendIds(uid: string): Promise<string[]> {
 }
 
 export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) {
-  const { user } = useAuth();
+  const { user } = useAuth(); // the CURRENTLY logged-in viewer (not the profile being shown)
   const { showToast } = useToast();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [friendRowId, setFriendRowId] = useState<string | null>(null);
+  const [friendRowId, setFriendRowId] = useState<string | null>(null); // the ID of the existing friends-table row between these two, if any
   const [friendStatus, setFriendStatus] = useState<FriendStatus>('loading');
   const [mutuals, setMutuals] = useState<MutualFriend[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false); // true while a friend-request action is in flight, to disable buttons and prevent double-clicks
   const [projects, setProjects] = useState<StudentProject[]>([]);
-  const [showProjects, setShowProjects] = useState(false);
+  const [showProjects, setShowProjects] = useState(false); // the projects list starts collapsed and expands on click
 
   useEffect(() => {
     let active = true;
@@ -50,6 +68,8 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
       setLoading(true);
       setError(false);
 
+      // Fetch the core profile first — this is the minimum needed to show
+      // anything at all.
       const { data, error: err } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
       if (!active) return;
       if (err || !data) {
@@ -59,8 +79,10 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
         return;
       }
       setProfile(data as Profile);
-      setLoading(false);
+      setLoading(false); // stop the main loading spinner as soon as we have the core profile — everything below loads in the background
 
+      // Fetch their showcased projects separately (not blocking the main
+      // profile display on this).
       supabase
         .from('student_projects')
         .select('*')
@@ -70,13 +92,17 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
           if (active) setProjects((proj as StudentProject[]) || []);
         });
 
-      if (!user) return;
+      if (!user) return; // not logged in — skip all the friendship logic below (nothing to compare against)
 
       if (user.id === userId) {
+        // Viewing your OWN profile card — no friend button makes sense.
         setFriendStatus('self');
         return;
       }
 
+      // Look for an existing friends-table row between these two people,
+      // in EITHER direction (`.or(...)` checks both "I requested them" and
+      // "they requested me" in one query).
       const { data: row } = await supabase
         .from('friends')
         .select('id, status, requester_id, recipient_id')
@@ -86,23 +112,28 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
       if (!active) return;
 
       if (!row) {
-        setFriendStatus('none');
+        setFriendStatus('none'); // no relationship at all yet
       } else {
         const f = row as Friend;
         setFriendRowId(f.id);
         if (f.status === 'accepted') setFriendStatus('accepted');
+        // If the row's status is still 'pending', figure out WHICH
+        // direction it's pending in — did I send it, or did they?
         else if (f.requester_id === user.id) setFriendStatus('outgoing');
         else setFriendStatus('incoming');
       }
 
+      // Compute mutual friends: get both people's full accepted-friends
+      // lists, then find the overlap.
       const [myFriends, theirFriends] = await Promise.all([
         getAcceptedFriendIds(user.id),
         getAcceptedFriendIds(userId),
       ]);
-      const theirSet = new Set(theirFriends);
+      const theirSet = new Set(theirFriends); // a Set makes the "is this ID in their list?" check below fast
       const mutualIds = myFriends.filter((id) => theirSet.has(id));
       if (!active || mutualIds.length === 0) return;
 
+      // Fetch just the name/avatar of each mutual friend, for display.
       const { data: mutualProfiles } = await supabase
         .from('profiles')
         .select('id, full_name, avatar_url')
@@ -114,15 +145,22 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
     return () => { active = false; };
   }, [userId, user]);
 
+  // Sends a new friend request from the viewer to this profile's owner.
   const sendRequest = async () => {
     if (!user) return;
     setBusy(true);
     const { error } = await supabase.from('friends').insert({ requester_id: user.id, recipient_id: userId, status: 'pending' });
     if (error) {
+      // Postgres error code '23505' means "unique constraint violation" —
+      // in this case, that almost certainly means a friend request between
+      // these two already exists (perhaps sent moments ago from another
+      // tab), so we show a gentler "already sent" message instead of a
+      // generic error.
       showToast(error.code === '23505' ? 'Request already sent' : 'Could not send request', error.code === '23505' ? 'info' : 'error');
       setBusy(false);
       return;
     }
+    // Notify the other person they've received a request.
     await supabase.from('notifications').insert({
       user_id: userId, type: 'friend_request',
       title: `${profile?.full_name || 'Someone'} sent you a friend request`,
@@ -133,10 +171,12 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
     setBusy(false);
   };
 
+  // Accepts an incoming friend request.
   const acceptRequest = async () => {
     if (!friendRowId || !user) return;
     setBusy(true);
     await supabase.from('friends').update({ status: 'accepted', updated_at: new Date().toISOString() }).eq('id', friendRowId);
+    // Let the original requester know their request was accepted.
     await supabase.from('notifications').insert({
       user_id: userId, type: 'friend_accepted',
       title: `${user.user_metadata?.full_name || 'Someone'} accepted your friend request`,
@@ -148,7 +188,6 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
   };
 
   return (
-    <Portal>
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
       onClick={onClose}
@@ -157,6 +196,8 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
         className="glass w-full max-w-md max-h-[90vh] overflow-y-auto scroll-thin animate-fade-in-scale"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Banner + close button — same visual pattern as
+            CompanyProfileCardModal. */}
         <div className="relative h-24 w-full overflow-hidden rounded-t-2xl bg-gradient-to-br from-[var(--accent)]/20 to-[var(--accent-2)]/20">
           {profile?.banner_url && <img src={profile.banner_url} alt="" className="h-full w-full object-cover" />}
           <button onClick={onClose} className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg bg-black/30 text-white hover:bg-black/50">
@@ -177,6 +218,8 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
           </div>
         ) : (
           <>
+            {/* Avatar (or a fallback showing their initials, if no photo
+                has been uploaded) + name + admin badge if applicable + branch. */}
             <div className="-mt-8 flex flex-col items-center gap-3 text-center">
               {profile.avatar_url ? (
                 <img src={profile.avatar_url} alt="" className="h-20 w-20 rounded-2xl border-4 border-[var(--bg-elevated)] object-cover" />
@@ -217,6 +260,9 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
               </div>
             )}
 
+            {/* Collapsible projects section — only shown at all if the
+                student has at least one project, and starts collapsed to
+                keep the card compact. */}
             {projects.length > 0 && (
               <div className="mt-4">
                 <button
@@ -240,12 +286,17 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
                         )}
                         <div className="flex items-start justify-between gap-2">
                           <p className="text-sm font-medium">{p.title}</p>
+                          {/* Only show the external link icon if the
+                              project actually has a URL to link to. */}
                           {p.project_url && (
                             <a href={p.project_url} target="_blank" rel="noreferrer" className="flex-shrink-0 text-[var(--text-muted)] hover:text-[var(--accent)]">
                               <ExternalLink size={14} />
                             </a>
                           )}
                         </div>
+                        {/* `line-clamp-3` truncates the description to 3
+                            lines with a "..." if it's longer, so one
+                            long project description can't blow up the card's height. */}
                         {p.description && <p className="mt-1 text-xs text-[var(--text-secondary)] line-clamp-3">{p.description}</p>}
                         {p.tech_stack?.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -263,6 +314,8 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
               </div>
             )}
 
+            {/* Mutual friends row — capped at showing 6 even if there are
+                more, to keep the card a reasonable size. */}
             {mutuals.length > 0 && (
               <div className="mt-4">
                 <p className="mb-2 flex items-center gap-1 text-xs font-semibold uppercase text-[var(--text-muted)]">
@@ -285,6 +338,10 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
               </div>
             )}
 
+            {/* Action buttons row — which buttons appear depends on both
+                the friendship status AND whether the caller of this modal
+                even wanted a Message/Call option (via the optional
+                onMessage/onCall props). */}
             <div className="mt-5 flex items-center gap-2">
               {friendStatus === 'none' && (
                 <button onClick={sendRequest} disabled={busy} className="btn-primary btn-sm flex-1">
@@ -310,6 +367,8 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
                   <MessageSquare size={14} /> Message
                 </button>
               )}
+              {/* Calling is only offered once you're actually friends —
+                  makes sense given calls are a more personal action than messaging. */}
               {onCall && friendStatus === 'accepted' && (
                 <button
                   onClick={() => { onCall(profile.id); onClose(); }}
@@ -322,8 +381,7 @@ export function ProfileCardModal({ userId, onClose, onMessage, onCall }: Props) 
           </>
         )}
         </div>
-        </div>
       </div>
-    </Portal>
+    </div>
   );
 }

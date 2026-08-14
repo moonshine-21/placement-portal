@@ -1,3 +1,17 @@
+// ============================================================================
+// src/views/JobsView.tsx
+//
+// WHAT THIS FILE IS: the company-side page for managing job postings —
+// create, edit, and delete jobs, with a visual progress bar showing how
+// many of the needed positions have been filled so far.
+//
+// Note: this is the SAME `jobs` table that the AI "bot" companies write
+// to automatically (see api/bot-rotate-jobs.ts) — a real human company
+// managing jobs through this page, and a bot company having jobs
+// generated for it by Gemini, both just produce ordinary rows in the same
+// table. This page has no special awareness of bots at all.
+// ============================================================================
+
 import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
@@ -10,9 +24,19 @@ export function JobsView() {
   const { showToast } = useToast();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [showForm, setShowForm] = useState(false);
+  // Which job is currently being edited, if any — `null` means the form
+  // (if open) is for creating a BRAND NEW job instead of editing an
+  // existing one. This single value is what the form's submit handler
+  // checks to decide between INSERT and UPDATE (see handleSubmit below).
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // One piece of state per form field — all kept as plain text/strings
+  // even for numeric fields (package, employee counts), and converted to
+  // real numbers only at save time (see handleSubmit) — this is simpler
+  // than juggling number-typed state while someone's still mid-typing
+  // (e.g. an empty or partial number field is awkward to represent as an
+  // actual `number` type).
   const [jobName, setJobName] = useState('');
   const [jobRole, setJobRole] = useState('');
   const [jobDesc, setJobDesc] = useState('');
@@ -31,11 +55,15 @@ export function JobsView() {
 
   useEffect(() => { loadJobs(); }, [profile]);
 
+  // Clears every form field back to blank and closes the form — used both
+  // after a successful save AND when the "Cancel"/X button is clicked.
   const resetForm = () => {
     setJobName(''); setJobRole(''); setJobDesc(''); setJobSkills(''); setJobPackage(''); setEmpNeeded(''); setEmpHave('');
     setEditingId(null); setShowForm(false);
   };
 
+  // Pre-fills the form with an EXISTING job's data, and marks it as being
+  // edited (rather than a new job) via `editingId`.
   const editJob = (j: Job) => {
     setJobName(j.job_name); setJobRole(j.role); setJobDesc(j.description);
     setJobSkills(j.skills_required.join(', ')); setJobPackage(String(j.package_lpa));
@@ -43,10 +71,16 @@ export function JobsView() {
     setEditingId(j.id); setShowForm(true);
   };
 
+  // Handles BOTH creating a new job and saving edits to an existing one —
+  // which branch runs depends on whether `editingId` is set.
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!profile) return;
     setSaving(true);
+    // Build one shared payload object used for either the insert or
+    // update below, converting the text-based number fields back into
+    // real numbers here (with `|| 0` as a fallback if parsing fails,
+    // e.g. from an empty field).
     const payload = {
       company_id: profile.id, job_name: jobName, role: jobRole, description: jobDesc,
       skills_required: jobSkills.split(',').map((s) => s.trim()).filter(Boolean),
@@ -88,6 +122,9 @@ export function JobsView() {
         ) : (
           <div className="space-y-3">
             {jobs.map((j) => {
+              // How far along hiring is for this job, as a 0-100
+              // percentage, for the progress bar below. Guards against
+              // dividing by zero if `employees_needed` is 0.
               const progress = j.employees_needed > 0 ? Math.min(100, (j.employees_have / j.employees_needed) * 100) : 0;
               return (
                 <div key={j.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 animate-fade-in">
@@ -102,6 +139,8 @@ export function JobsView() {
                       {j.skills_required.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 mt-2">{j.skills_required.map((s) => <span key={s} className="rounded-md bg-[var(--accent)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--accent)]">{s}</span>)}</div>
                       )}
+                      {/* Visual hiring-progress bar, filled proportionally
+                          to `progress` computed above. */}
                       <div className="mt-3 flex items-center gap-3">
                         <div className="h-1.5 flex-1 rounded-full bg-[var(--border-strong)] overflow-hidden max-w-32"><div className="h-full rounded-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent-2)]" style={{ width: `${progress}%` }} /></div>
                         <span className="text-xs text-[var(--text-muted)]">{j.employees_have}/{j.employees_needed} filled</span>
@@ -119,6 +158,8 @@ export function JobsView() {
         )}
       </div>
 
+      {/* The create/edit form — same form used for both, its heading and
+          submit behavior just change based on `editingId`. */}
       {showForm && (
         <form onSubmit={handleSubmit} className="card space-y-5 animate-slide-up">
           <div className="flex items-center justify-between">

@@ -1,9 +1,41 @@
+// ============================================================================
+// src/views/AIAssistantView.tsx
+//
+// WHAT THIS FILE IS: the AI Career Assistant chat page. It tries THREE
+// different ways to get a reply, in order, each one a fallback for the
+// previous one failing:
+//
+//   1. "backend"  — call our own server (api/ai-chat.ts), which safely
+//                   calls Gemini using a server-only API key. This is the
+//                   normal, intended path in production.
+//   2. "gemini"   — call Gemini DIRECTLY from the browser, but ONLY if a
+//                   VITE_GEMINI_API_KEY happens to be set in this
+//                   project's .env file. This exists purely as a
+//                   local-development convenience (e.g. running `vite
+//                   dev` without the Vercel backend running alongside
+//                   it) — SECURITY NOTE: any VITE_-prefixed env var gets
+//                   bundled straight into the public JS anyone can view,
+//                   so a real API key should never actually be set this
+//                   way in a deployed/production build. Leave this .env
+//                   var unset in production and path 1 (or 3) handles it.
+//   3. "offline"  — a purely local, rule-based reply generator
+//                   (`smartReply`) using simple keyword matching — no AI
+//                   at all, just handwritten if/else logic. This guarantees
+//                   the assistant NEVER goes completely silent, even with
+//                   no internet reaching Gemini at all.
+//
+// The chat window always shows which mode answered (see `lastSource`),
+// so nobody is fooled into thinking a canned offline reply is "real AI."
+// ============================================================================
+
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { loadOpenJobs, generateJobMatches } from '@/lib/data';
+import { loadMatches, loadCompanies } from '@/lib/data';
 import { Sparkles, Send, Bot, User as UserIcon } from 'lucide-react';
-import type { JobMatch } from '@/lib/supabase';
+import type { Match, Company } from '@/lib/supabase';
 
+// The starter "quick question" chips shown before the person has typed
+// anything themselves.
 const SUGGESTIONS = [
   'What skills should I learn?',
   'Which companies match me best?',
@@ -16,8 +48,14 @@ const SUGGESTIONS = [
 // The AI service sometimes replies in Markdown even when asked not to.
 // Convert the common bits (bold, bullet lists, line breaks) into safe HTML
 // instead of dumping raw asterisks/dashes onto the screen.
+//
+// How it works: walks through the reply line by line. A line starting
+// with *, -, or • is treated as part of a bulleted list (`<ul><li>`); any
+// other non-empty line becomes its own paragraph (`<p>`). `inList` tracks
+// whether we're currently "inside" a list, so consecutive bullet lines
+// get grouped into ONE <ul> rather than a separate list per line.
 function formatAIText(raw: string): string {
-  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const lines = raw.replace(/\r\n/g, '\n').split('\n'); // normalize Windows-style line endings, then split into individual lines
   const htmlLines: string[] = [];
   let inList = false;
 
@@ -37,36 +75,51 @@ function formatAIText(raw: string): string {
       }
       htmlLines.push(`<li>${bulletMatch[1]}</li>`);
     } else {
-      closeList();
+      closeList(); // a non-bullet line ends whatever list was in progress
       if (line.trim()) htmlLines.push(`<p>${line}</p>`);
     }
   }
-  closeList();
+  closeList(); // in case the text ended while still inside a list
 
   let html = htmlLines.join('');
-  // **bold** -> <strong>bold</strong> (after structural HTML is built, so ** inside bullets still converts)
+  // **bold** -> <strong>bold</strong> (done AFTER the structural HTML
+  // above is built, so any ** that happened to be inside a bullet still
+  // gets converted correctly).
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  // Any leftover stray single asterisks Gemini left dangling
+  // Clean up any leftover stray single asterisks Gemini sometimes leaves
+  // dangling (that weren't part of a real **bold** pair) — the negative
+  // lookbehind/lookahead here (`(?<![*\w])` / `(?!\*)`) makes sure this
+  // doesn't accidentally eat asterisks that ARE meant to render, like in
+  // a math expression.
   html = html.replace(/(?<![*\w])\*(?!\*)/g, '');
   return html;
 }
 
 export function AIAssistantView() {
   const { profile } = useAuth();
+  // Each chat message tracks which "source" answered it (see the 3-tier
+  // system explained above) and, for offline replies, a `debug` note
+  // explaining WHY it fell back (shown as a small warning under the message).
   const [messages, setMessages] = useState<{ role: 'bot' | 'user'; text: string; source?: 'gemini' | 'backend' | 'offline'; debug?: string }[]>([]);
   const [input, setInput] = useState('');
-  const [typing, setTyping] = useState(false);
+  const [typing, setTyping] = useState(false); // shows the "..." typing-indicator bubble while waiting for a reply
   const [showSuggestions, setShowSuggestions] = useState(true);
-  const [matches, setMatches] = useState<JobMatch[]>([]);
-  const [lastSource, setLastSource] = useState<'gemini' | 'backend' | 'offline' | null>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [lastSource, setLastSource] = useState<'gemini' | 'backend' | 'offline' | null>(null); // drives the small status line under the header ("AI Assistant active" etc)
+  const bodyRef = useRef<HTMLDivElement>(null); // used to auto-scroll the chat to the bottom on new messages
 
+  // Load the student's profile-derived context (matches + company list)
+  // once, up front — this is what gets sent along with every question so
+  // the AI (or the offline fallback) can give personalized answers.
   useEffect(() => {
     if (profile) {
-      loadOpenJobs().then((jobs) => setMatches(generateJobMatches(profile, jobs)));
+      loadMatches(profile.id).then(setMatches);
+      loadCompanies().then(setCompanies);
     }
   }, [profile]);
 
+  // Show a one-time welcome message the very first time this page opens.
   useEffect(() => {
     if (messages.length === 0) {
       setMessages([{
@@ -76,10 +129,19 @@ export function AIAssistantView() {
     }
   }, []);
 
+  // Auto-scroll the chat window to the bottom whenever a new message is
+  // added, or when the typing indicator appears/disappears — keeps the
+  // latest message always in view without the person having to scroll manually.
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, typing]);
 
+  // ---------- TIER 3: the fully offline, rule-based fallback ----------
+  // A big keyword-matching function — no AI involved at all. Each `if`
+  // block checks the question against a regular expression of related
+  // keywords, and if it matches, builds a reply using real data from the
+  // student's own profile/matches (so even the "dumb" fallback still
+  // feels personalized, not like a generic canned response).
   const smartReply = (question: string): string => {
     const q = question.toLowerCase().trim();
     const skills = profile?.skills || [];
@@ -88,6 +150,8 @@ export function AIAssistantView() {
     const completion = profile?.profile_completion || 0;
     const name = profile?.full_name || 'there';
 
+    // `flatMap` combines every match's missing_skills arrays into one big
+    // flat list, and `new Set(...)` removes duplicates from it.
     const missingAll = [...new Set(matches.flatMap((m) => m.missing_skills || []))];
     const topMatches = [...matches].sort((a, b) => b.match_score - a.match_score).slice(0, 5);
     const eligible = matches.filter((m) => m.eligible);
@@ -129,12 +193,15 @@ export function AIAssistantView() {
     // Matches / companies / best
     if (/match|company|best|recommend|apply|eligible/.test(q)) {
       if (!matches.length) {
-        return `No matches yet. Complete your profile (skills, CGPA, branch) and open the <strong>Match & Recommendations</strong> page — matches are generated from currently open job postings.`;
+        return `No matches yet. Complete your profile (skills, CGPA, branch) and open the <strong>Match & Recommendations</strong> page to generate matches against ${companies.length || 'available'} companies.`;
       }
       const lines = topMatches.map((m, i) => {
-        const pkg = m.package_lpa != null ? `₹${m.package_lpa} LPA` : '';
+        const c = m.companies;
+        const nameC = c?.name || 'Company';
+        const role = c?.role || '';
+        const pkg = c?.package_lpa != null ? `₹${c.package_lpa} LPA` : '';
         const gap = m.missing_skills?.length ? ` — gap: ${m.missing_skills.slice(0, 3).join(', ')}` : ' — fully eligible';
-        return `${i + 1}. <strong>${m.company_name}</strong> (${m.match_score}%)${m.role ? ` · ${m.role}` : ''}${pkg ? ` · ${pkg}` : ''}${gap}`;
+        return `${i + 1}. <strong>${nameC}</strong> (${m.match_score}%)${role ? ` · ${role}` : ''}${pkg ? ` · ${pkg}` : ''}${gap}`;
       }).join('<br/>');
       return `You have <strong>${matches.length}</strong> matches (${eligible.length} eligible, ${high.length} at 85%+).<br/><br/>Top picks:<br/>${lines}<br/><br/>Open <strong>Match & Recommendations</strong> to apply.`;
     }
@@ -182,7 +249,9 @@ Current profile: <strong>${completion}%</strong> · Skills: <strong>${skills.len
       return "You're welcome! Ask anytime about skills, matches, or your profile. Good luck with placements! 🚀";
     }
 
-    // Fallback with context
+    // Fallback for anything that didn't match a specific topic above — a
+    // generic "here's what I can help with" menu, still personalized
+    // with the student's real numbers at the end.
     return `I can help with:<br/>
 • <strong>Skills & gaps</strong> — what to learn next<br/>
 • <strong>Company matches</strong> — your best fits<br/>
@@ -192,11 +261,14 @@ Current profile: <strong>${completion}%</strong> · Skills: <strong>${skills.len
 You currently have <strong>${skills.length} skills</strong>, CGPA <strong>${cgpa || '—'}</strong>, and <strong>${matches.length} matches</strong>. What should we focus on?`;
   };
 
+  // The main "get a reply" function — tries each of the 3 tiers in
+  // order, falling through to the next one on any failure.
   const getAIReply = async (question: string): Promise<{ text: string; source: 'gemini' | 'backend' | 'offline'; debug?: string }> => {
-    // 1) Server-side proxy (Vercel function at /api/ai-chat) — keeps the Gemini
-    // key off the client and retries transient rate-limit/overload errors.
-    // See api/ai-chat.ts. Falls through silently if not deployed (e.g. local
-    // `vite dev` without `vercel dev`).
+    // ---------- TIER 1: server-side proxy (Vercel function at /api/ai-chat) ----------
+    // Keeps the real Gemini key off the client and retries transient
+    // rate-limit/overload errors server-side. See api/ai-chat.ts. Falls
+    // through silently if not deployed (e.g. local `vite dev` without
+    // `vercel dev` running alongside it, where this endpoint doesn't exist).
     try {
       const res = await fetch('/api/ai-chat', {
         method: 'POST',
@@ -214,11 +286,14 @@ You currently have <strong>${skills.length} skills</strong>, CGPA <strong>${cgpa
       console.warn('AI Assistant: /api/ai-chat request failed (is the function deployed?):', err);
     }
 
-    // 2) Direct Gemini when VITE_GEMINI_API_KEY is set in .env
+    // ---------- TIER 2: direct Gemini call, only if a dev-only key is set ----------
     const geminiKey = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)?.trim();
     if (geminiKey) {
       try {
         const skills = profile?.skills || [];
+        // The exact same "persona + rules" prompt style used server-side
+        // in api/ai-chat.ts's buildPrompt — kept consistent so the
+        // assistant behaves the same regardless of which tier answers.
         const sys = `You are a campus placement career assistant chatting with a student in an ongoing conversation. Talk like a real person having a conversation, not like you're generating a report.
 
 Reference info about the student — you have this so you CAN answer questions about it, not so you should recite it. Only bring up specific numbers (CGPA, completion %, match scores) when the question is actually about that.
@@ -228,7 +303,8 @@ CGPA: ${profile?.cgpa || 'n/a'}
 Skills: ${skills.join(', ') || 'none listed'}
 Profile completion: ${profile?.profile_completion || 0}%
 Top matches: ${matches.slice(0, 5).map((m) => {
-  return `${m.company_name} ${m.match_score}% (missing: ${(m.missing_skills || []).join(', ') || 'none'})`;
+  const c = m.companies;
+  return `${c?.name || 'Company'} ${m.match_score}% (missing: ${(m.missing_skills || []).join(', ') || 'none'})`;
 }).join('; ') || 'none yet'}
 
 Rules:
@@ -263,22 +339,29 @@ Rules:
           return res;
         };
 
-        // Try the primary model, then fall back to an alternate if it's been deprecated (404).
-        // Also retry once on 429 (rate limited) / 503 (overloaded) — transient under load.
+        // Try the primary model, then fall back to an alternate if it's
+        // been deprecated (404). Also retry once on 429 (rate limited) /
+        // 503 (overloaded) — transient failures worth one retry under load.
         const modelsToTry = ['gemini-flash-latest', 'gemini-flash-lite-latest'];
         let res: Response | null = null;
         let lastBody = '';
+        // `outer:` is a LABELED loop — a rarely-used JS feature that lets
+        // `break outer` jump out of BOTH the inner attempt-loop AND the
+        // outer model-loop at once, from deep inside the inner loop.
+        // Without this label, a plain `break` would only exit the
+        // innermost loop, leaving the outer model loop to keep going
+        // unnecessarily even after we'd already found a working response.
         outer: for (const model of modelsToTry) {
           for (let attempt = 0; attempt < 2; attempt++) {
             res = await callGemini(model);
-            if (res.ok) break outer;
+            if (res.ok) break outer; // success — stop everything
             lastBody = await res.text().catch(() => '');
             if (res.status === 429 || res.status === 503) {
-              if (attempt === 0) { await new Promise((r) => setTimeout(r, 500)); continue; }
+              if (attempt === 0) { await new Promise((r) => setTimeout(r, 500)); continue; } // brief pause, then retry same model once
               break; // still failing after retry — move to next model
             }
-            if (res.status !== 404) break outer; // non-retryable, non-"model retired" — stop entirely
-            break; // 404: try the next model in the list
+            if (res.status !== 404) break outer; // non-retryable, non-"model retired" error — stop entirely
+            break; // 404 specifically means "this model no longer exists" — try the next model in the list
           }
         }
 
@@ -293,6 +376,8 @@ Rules:
             }
             return { text: formatAIText(text.trim()), source: 'gemini' };
           }
+          // Got a 200 response but somehow no actual text back — fall
+          // through to the offline tier rather than showing a blank reply.
           const blockReason = finishReason || data?.promptFeedback?.blockReason;
           console.warn(`AI service returned no text (finishReason: ${blockReason || 'unknown'}).`, data);
           return { text: smartReply(question), source: 'offline', debug: 'The AI service returned an empty response, so quick-tips mode was used instead.' };
@@ -306,10 +391,14 @@ Rules:
       }
     }
 
+    // ---------- TIER 3: no server, no dev key — go straight to offline ----------
     console.info('AI Assistant: no API key configured for this build — using quick-tips mode.');
     return { text: smartReply(question), source: 'offline', debug: 'Live AI is not configured yet, so quick-tips mode was used instead.' };
   };
 
+  // Sends a question — either typed into the input box, or from a
+  // clicked suggestion chip (`text` parameter lets a suggestion chip
+  // trigger this directly with its own text, bypassing the input box).
   const send = async (text?: string) => {
     const question = (text || input).trim();
     if (!question) return;
@@ -326,6 +415,7 @@ Rules:
   return (
     <div className="mx-auto max-w-3xl">
       <div className="glass flex h-[calc(100vh-8rem)] flex-col overflow-hidden">
+        {/* ---------- Header ---------- */}
         <div className="flex items-center gap-3 border-b border-[var(--border)] px-5 py-4">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]">
             <Sparkles size={20} className="text-white" />
@@ -335,15 +425,23 @@ Rules:
               <span className="font-semibold">AI Career Assistant</span>
               <span className="rounded-md bg-[var(--accent)]/15 px-2 py-0.5 text-[10px] font-bold text-[var(--accent)]">AI</span>
             </div>
+            {/* This small status line honestly reflects which tier
+                actually answered the LAST message — so if it silently
+                fell back to offline mode, the person can tell. */}
             <p className="text-xs text-emerald-400">
               {lastSource === 'gemini' ? '⚡ AI Assistant active' : lastSource === 'offline' ? '⚠ Quick-tips mode' : 'Ready · profile-aware'}
             </p>
           </div>
         </div>
 
+        {/* ---------- Message list ---------- */}
         <div ref={bodyRef} className="flex-1 overflow-y-auto scroll-thin p-5 space-y-4">
           {messages.map((m, i) => (
             <div key={i} className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
+              {/* Bot messages get an icon on the LEFT; user messages get
+                  one on the RIGHT — achieved just by which side of the
+                  bubble each icon block is placed on in the JSX, combined
+                  with `justify-end`/`justify-start` above. */}
               {m.role === 'bot' && (
                 <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]">
                   <Bot size={16} className="text-white" />
@@ -356,8 +454,22 @@ Rules:
                       ? 'bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] text-white rounded-br-md'
                       : 'bg-[var(--surface-hover)] text-[var(--text-primary)] rounded-bl-md border border-[var(--border)]'
                   }`}
+                  // `dangerouslySetInnerHTML` renders raw HTML instead of
+                  // plain text — needed here because `formatAIText`
+                  // built real HTML tags (`<strong>`, `<ul>`, etc) for
+                  // the message. React names this prop "dangerous" as a
+                  // reminder that raw HTML from an untrusted source COULD
+                  // be a security risk (script injection) — this is
+                  // considered acceptable here because the HTML is
+                  // either our own hardcoded smartReply() strings, or
+                  // built by formatAIText() from Gemini's plain-text
+                  // reply (Gemini isn't asked to output any HTML/script
+                  // tags, and none of this text is ever inserted as
+                  // executable attributes).
                   dangerouslySetInnerHTML={{ __html: m.text }}
                 />
+                {/* A small honesty note under any offline-mode reply,
+                    explaining briefly why real AI wasn't used this time. */}
                 {m.role === 'bot' && m.source === 'offline' && m.debug && (
                   <p className="mt-1 px-1 text-[10px] text-amber-400/80">⚠ {m.debug}</p>
                 )}
@@ -369,6 +481,7 @@ Rules:
               )}
             </div>
           ))}
+          {/* The "..." typing indicator, shown only while waiting for a reply. */}
           {typing && (
             <div className="flex gap-3 animate-fade-in">
               <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]">
@@ -381,6 +494,8 @@ Rules:
           )}
         </div>
 
+        {/* Suggestion chips only shown before the person has really
+            started chatting (i.e. still just the one welcome message). */}
         {showSuggestions && messages.length <= 1 && (
           <div className="border-t border-[var(--border)] p-4">
             <p className="mb-2 text-xs font-medium text-[var(--text-muted)]">Try asking:</p>
@@ -398,6 +513,7 @@ Rules:
           </div>
         )}
 
+        {/* ---------- Input bar ---------- */}
         <div className="border-t border-[var(--border)] p-4">
           <div className="flex items-center gap-2">
             <input

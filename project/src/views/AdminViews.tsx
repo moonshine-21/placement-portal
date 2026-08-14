@@ -1,3 +1,26 @@
+// ============================================================================
+// src/views/AdminViews.tsx
+//
+// WHAT THIS FILE IS: four admin-panel screens — Dashboard (stats +
+// recent activity), Users (search/filter/edit/ban accounts), Logs (the
+// full admin_audit_log), and Content (moderate/delete jobs,
+// announcements, events, forum posts).
+//
+// HONEST NOTE ON WHERE THIS IS ACTUALLY USED: as of the current version
+// of App.tsx, none of these four exported components are actually
+// reachable from this main student/company app anymore — the admin
+// panel now lives in a completely separate standalone application (see
+// the comment on ADMIN_NAV in src/components/AppShell.tsx). This file is
+// kept here, fully working and unchanged, in case the admin views are
+// ever folded back into this app, or so the separate admin project can
+// still reference this exact same code/logic if it's built from the same
+// repository. Every admin/RLS security rule these screens rely on (e.g.
+// only an owner can promote someone to admin) is enforced at the
+// DATABASE level regardless of which app calls it — see the `is_admin()`
+// checks throughout supabase/setup.sql — so this file being unreachable
+// from here isn't a security gap, just currently-unused UI code.
+// ============================================================================
+
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Profile, AuditLogEntry, Announcement, Job, Event as EventT, ForumPost } from '@/lib/supabase';
@@ -5,7 +28,6 @@ import { useAuth } from '@/lib/auth';
 import { useToast } from '@/lib/toast';
 import { logAdminAction } from '@/lib/audit';
 import { Select } from '@/components/Select';
-import { Portal } from '@/components/Portal';
 import { timeAgo } from '@/lib/data';
 import {
   Users, ShieldAlert, ScrollText, Search, X, Ban, ShieldCheck, Save,
@@ -14,7 +36,7 @@ import {
 } from 'lucide-react';
 
 /* ---------------------------------------------------------------------- */
-/* Dashboard                                                               */
+/* Dashboard — platform-wide stat cards + a preview of recent admin activity */
 /* ---------------------------------------------------------------------- */
 
 export function AdminDashboardView() {
@@ -27,9 +49,12 @@ export function AdminDashboardView() {
 
   useEffect(() => {
     (async () => {
+      // Fetch everything needed for every stat card, all at once, in
+      // parallel — `Promise.all` runs all 6 queries simultaneously
+      // instead of one after another, which is much faster.
       const [profiles, jobs, apps, ann, posts, logs] = await Promise.all([
-        supabase.from('profiles').select('role, is_banned'),
-        supabase.from('jobs').select('id', { count: 'exact', head: true }),
+        supabase.from('profiles').select('role, is_banned'), // fetch every profile's role/ban status, so the counts below can be calculated locally
+        supabase.from('jobs').select('id', { count: 'exact', head: true }), // `head: true` means "just give me the COUNT, don't actually send back all the rows" — much more efficient for a simple total
         supabase.from('company_applications').select('id', { count: 'exact', head: true }),
         supabase.from('announcements').select('id', { count: 'exact', head: true }),
         supabase.from('forum_posts').select('id', { count: 'exact', head: true }),
@@ -52,6 +77,10 @@ export function AdminDashboardView() {
     })();
   }, []);
 
+  // The stat cards' content is defined as plain data, then rendered by
+  // mapping over it below — same pattern used in LandingPage.tsx, keeps
+  // adding/removing a stat card to a one-line change here rather than
+  // duplicated markup.
   const cards = [
     { label: 'Students', value: stats.students, icon: GraduationCap, color: '#38bdf8' },
     { label: 'Companies', value: stats.companies, icon: Building2, color: '#a78bfa' },
@@ -106,7 +135,7 @@ export function AdminDashboardView() {
 }
 
 /* ---------------------------------------------------------------------- */
-/* User management                                                         */
+/* User management — search/filter every account, edit or ban any of them  */
 /* ---------------------------------------------------------------------- */
 
 export function AdminUsersView() {
@@ -116,7 +145,7 @@ export function AdminUsersView() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | 'student' | 'company' | 'admin' | 'owner'>('all');
-  const [editing, setEditing] = useState<Profile | null>(null);
+  const [editing, setEditing] = useState<Profile | null>(null); // which user's EditUserModal is currently open, if any
 
   const load = async () => {
     setLoading(true);
@@ -127,6 +156,9 @@ export function AdminUsersView() {
 
   useEffect(() => { load(); }, []);
 
+  // Client-side filtering: role dropdown AND a text search across both
+  // name and email, applied together (a user must pass BOTH checks to
+  // show up in the list).
   const filtered = users.filter((u) => {
     if (roleFilter !== 'all' && u.role !== roleFilter) return false;
     const q = search.toLowerCase();
@@ -169,6 +201,10 @@ export function AdminUsersView() {
         <div className="card p-8 text-center text-[var(--text-muted)]">No users found.</div>
       ) : (
         <div className="card overflow-hidden">
+          {/* A scrollable table body with a sticky header — `max-h-[65vh]
+              overflow-y-auto` lets a long user list scroll independently
+              of the rest of the page, while `sticky top-0` keeps the
+              column headers visible at the top the whole time. */}
           <div className="max-h-[65vh] overflow-y-auto scroll-thin">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-[var(--bg-elevated)] text-xs uppercase text-[var(--text-muted)]">
@@ -226,6 +262,9 @@ export function AdminUsersView() {
   );
 }
 
+// The "Manage User" popup — lets an admin edit basic profile fields and,
+// separately, ban/unban the account. Kept in this same file since it's
+// only ever used from AdminUsersView above.
 function EditUserModal({
   user, adminId, adminName, adminRole, onClose, onSaved, showToast,
 }: {
@@ -237,6 +276,13 @@ function EditUserModal({
   onSaved: () => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }) {
+  // Only an OWNER (the single highest permission level) can change
+  // someone's role, or take any action on ANOTHER owner's account — a
+  // regular admin can edit/ban ordinary users but can't touch owners or
+  // grant admin/owner roles. This is a UI-level restriction that mirrors
+  // (but doesn't replace) the real enforcement happening at the database
+  // level via RLS policies — even if this check were somehow bypassed,
+  // the database itself would still reject an unauthorized change.
   const isOwner = adminRole === 'owner';
   const targetIsOwner = user.role === 'owner';
   const [form, setForm] = useState({
@@ -249,8 +295,12 @@ function EditUserModal({
   });
   const [banReason, setBanReason] = useState(user.ban_reason || '');
   const [saving, setSaving] = useState(false);
-  const [confirmBan, setConfirmBan] = useState(false);
+  const [confirmBan, setConfirmBan] = useState(false); // requires a SECOND click to actually ban someone — see toggleBan below
 
+  // Saves the editable profile fields, and records the change in the
+  // audit log — including a `before`/`after` snapshot in `details`, so a
+  // later reviewer can see exactly what changed, not just that
+  // "something" was edited.
   const save = async () => {
     setSaving(true);
     const { error } = await supabase.from('profiles').update({
@@ -271,6 +321,13 @@ function EditUserModal({
     onSaved();
   };
 
+  // Bans OR unbans the account. Banning specifically requires clicking
+  // twice: the first click just reveals the "reason for ban" field and
+  // switches the button to "Confirm Ban" (via `confirmBan`) — only the
+  // SECOND click actually performs the ban. This two-step confirmation
+  // guards against an accidental single misclick banning someone.
+  // Unbanning has no such extra step, since undoing a mistaken unban is
+  // as simple as banning them again.
   const toggleBan = async () => {
     const nextBanned = !user.is_banned;
     if (nextBanned && !confirmBan) { setConfirmBan(true); return; }
@@ -294,7 +351,6 @@ function EditUserModal({
   };
 
   return (
-    <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="card w-full max-w-lg max-h-[85vh] overflow-y-auto scroll-thin p-6" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
@@ -309,11 +365,17 @@ function EditUserModal({
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-[var(--text-muted)]">Email (read-only)</label>
+            {/* Same reasoning as ProfileView.tsx's own email field —
+                login-identity email changes have to go through Supabase's
+                proper flow, never a direct database edit. */}
             <input className="input-field opacity-60" value={form.email} disabled />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-[var(--text-muted)]">Role</label>
+              {/* Only an owner sees an actual editable role dropdown — a
+                  regular admin sees the role as plain read-only text,
+                  with a small note explaining why they can't change it. */}
               {isOwner ? (
                 <Select
                   value={form.role}
@@ -350,6 +412,10 @@ function EditUserModal({
             <Save size={14} /> Save Changes
           </button>
 
+          {/* The ban/unban "Danger Zone" is only shown at all if the
+              target ISN'T an owner, OR the current admin viewing this IS
+              an owner themselves (owners can act on other owners; regular
+              admins can't touch any owner account, ban or otherwise). */}
           {(!targetIsOwner || isOwner) && (
           <div className="mt-4 rounded-xl border border-rose-500/20 bg-rose-500/5 p-4">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-rose-400">
@@ -373,6 +439,8 @@ function EditUserModal({
               >
                 <Ban size={14} /> {user.is_banned ? 'Unban Account' : confirmBan ? 'Confirm Ban' : 'Ban Account'}
               </button>
+              {/* A "Cancel" button only appears during the confirmation
+                  step, letting the admin back out without banning anyone. */}
               {confirmBan && !user.is_banned && (
                 <button onClick={() => setConfirmBan(false)} className="btn-secondary btn-sm">Cancel</button>
               )}
@@ -386,13 +454,12 @@ function EditUserModal({
           )}
         </div>
       </div>
-      </div>
-    </Portal>
+    </div>
   );
 }
 
 /* ---------------------------------------------------------------------- */
-/* Audit logs                                                              */
+/* Audit logs — a searchable feed of every admin action ever recorded      */
 /* ---------------------------------------------------------------------- */
 
 export function AdminLogsView() {
@@ -402,12 +469,19 @@ export function AdminLogsView() {
 
   useEffect(() => {
     (async () => {
+      // Capped at the 300 most recent entries — for a genuinely
+      // long-running deployment with a much bigger log history, this
+      // would eventually want pagination, but 300 is plenty for a
+      // "recent activity feed" style view.
       const { data } = await supabase.from('admin_audit_log').select('*').order('created_at', { ascending: false }).limit(300);
       setLogs((data as AuditLogEntry[]) || []);
       setLoading(false);
     })();
   }, []);
 
+  // Client-side search across three fields at once — matches if the
+  // query appears in EITHER the actor's name, the action name, or the
+  // target's label.
   const filtered = logs.filter((l) => {
     if (!q) return true;
     const s = q.toLowerCase();
@@ -451,7 +525,8 @@ export function AdminLogsView() {
 }
 
 /* ---------------------------------------------------------------------- */
-/* Content moderation                                                      */
+/* Content moderation — a tabbed view for deleting any job, announcement,  */
+/* event, or forum post on the platform, regardless of who posted it       */
 /* ---------------------------------------------------------------------- */
 
 type ContentTab = 'jobs' | 'announcements' | 'events' | 'forum';
@@ -466,6 +541,11 @@ export function AdminContentView() {
   const [posts, setPosts] = useState<ForumPost[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Loads ALL FOUR content types up front (not just the currently
+  // selected tab) — this means switching tabs is instant (no extra
+  // loading spinner per tab), at the cost of one slightly heavier initial
+  // load. A reasonable tradeoff for an admin tool that's opened
+  // infrequently and where a snappy tab-switch matters more.
   const load = async () => {
     setLoading(true);
     const [j, a, e, p] = await Promise.all([
@@ -483,6 +563,9 @@ export function AdminContentView() {
 
   useEffect(() => { load(); }, []);
 
+  // A single shared delete function used for all four content types —
+  // `table` says which database table to delete from, and the rest are
+  // just for the confirmation prompt and the audit-log entry.
   const remove = async (table: string, id: string, label: string, targetType: string) => {
     if (!confirm(`Remove "${label}"? This cannot be undone.`)) return;
     const { error } = await supabase.from(table).delete().eq('id', id);
@@ -522,6 +605,10 @@ export function AdminContentView() {
         <div className="typing-dots"><span></span><span></span><span></span></div>
       ) : (
         <div className="card divide-y divide-[var(--border)]">
+          {/* Only the currently-selected tab's list actually renders any
+              rows — the other three `&&` conditions are simply false and
+              render nothing, even though all four lists are already
+              loaded in memory. */}
           {tab === 'announcements' && announcements.map((a) => (
             <Row key={a.id} title={a.title} sub={`${a.author_name} · ${timeAgo(a.created_at)}`} onDelete={() => remove('announcements', a.id, a.title, 'announcement')} />
           ))}
@@ -534,6 +621,9 @@ export function AdminContentView() {
           {tab === 'forum' && posts.map((p) => (
             <Row key={p.id} title={p.title} sub={`${p.author_name} · ${timeAgo(p.created_at)}`} onDelete={() => remove('forum_posts', p.id, p.title, 'forum post')} />
           ))}
+          {/* Figures out which of the four lists is relevant to the
+              current tab, and shows an empty-state message only if THAT
+              specific list is empty. */}
           {(tab === 'announcements' ? announcements : tab === 'jobs' ? jobs : tab === 'events' ? events : posts).length === 0 && (
             <div className="p-8 text-center text-[var(--text-muted)]">
               <Filter size={24} className="mx-auto mb-2 opacity-40" /> Nothing here.
@@ -545,6 +635,9 @@ export function AdminContentView() {
   );
 }
 
+// A small shared row layout — title, subtitle, and a delete button — used
+// identically for all four content types above, so their list items look
+// consistent without repeating the same markup four times.
 function Row({ title, sub, onDelete }: { title: string; sub: string; onDelete: () => void }) {
   return (
     <div className="flex items-center justify-between gap-3 px-4 py-3">
@@ -559,4 +652,8 @@ function Row({ title, sub, onDelete }: { title: string; sub: string; onDelete: (
   );
 }
 
+// A small bundle of icons re-exported for convenience, in case another
+// file wants to reference the same icon set this admin UI uses (e.g. a
+// sidebar link elsewhere pointing at one of these sections) without
+// re-importing each one individually from lucide-react.
 export const AdminIcons = { Users, ShieldAlert, ScrollText, AlertTriangle };

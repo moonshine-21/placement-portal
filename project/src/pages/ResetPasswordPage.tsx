@@ -1,20 +1,36 @@
+// ============================================================================
+// src/pages/ResetPasswordPage.tsx
+//
+// WHAT THIS FILE IS: the screen shown after someone clicks a "reset your
+// password" link in their email (see the detailed explanation of how this
+// gets detected in src/lib/supabase.ts's authEvents / isPasswordRecoveryPending,
+// and src/lib/auth.tsx's isPasswordRecovery). This page lets them type a
+// brand new password, twice (to catch typos), then saves it.
+// ============================================================================
+
 import { useState, type FormEvent } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/lib/toast';
 import { Eye, EyeOff, KeyRound, ArrowRight } from 'lucide-react';
 
+// `onDone` is called once the password has been changed (or the person
+// cancels) — App.tsx uses this to know when to stop showing this special
+// screen and go back to the normal login flow.
 export function ResetPasswordPage({ onDone }: { onDone: () => void }) {
   const { showToast } = useToast();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [showPassword, setShowPassword] = useState(false); // toggles between hidden dots and plain text for the password field
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Runs when the form is submitted (either by clicking the button or
+  // pressing Enter in a field).
   const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+    e.preventDefault(); // stop the browser's default "reload the page" form behavior
     setError('');
 
+    // Basic validation before even talking to the server.
     if (password.length < 6) {
       setError('Password must be at least 6 characters.');
       return;
@@ -25,6 +41,9 @@ export function ResetPasswordPage({ onDone }: { onDone: () => void }) {
     }
 
     setLoading(true);
+    // The person arrived here via a special "recovery" login session
+    // (created automatically from the email link's token) — `updateUser`
+    // uses that active session to set the new password.
     const { error: err } = await supabase.auth.updateUser({ password });
     setLoading(false);
 
@@ -41,6 +60,8 @@ export function ResetPasswordPage({ onDone }: { onDone: () => void }) {
     showToast('Password updated. Please sign in with your new password.', 'success');
   };
 
+  // If the person changes their mind, sign them out of the temporary
+  // recovery session and send them back too, without changing anything.
   const handleCancel = async () => {
     await supabase.auth.signOut();
     onDone();
@@ -61,6 +82,7 @@ export function ResetPasswordPage({ onDone }: { onDone: () => void }) {
           </p>
         </div>
 
+        {/* Only shown when there's an actual error to display. */}
         {error && (
           <div className="mb-5 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300 animate-slide-down">
             {error}
@@ -74,22 +96,25 @@ export function ResetPasswordPage({ onDone }: { onDone: () => void }) {
             </label>
             <div className="relative">
               <input
+                // Switching the input's `type` between 'password' (dots)
+                // and 'text' (plain, readable) is literally what the
+                // show/hide eye icon controls.
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="At least 6 characters"
                 required
-                minLength={6}
-                autoComplete="new-password"
-                autoFocus
+                minLength={6} // browser-level validation, in addition to our own manual check above
+                autoComplete="new-password" // hints password managers to suggest/save a NEW password here, not autofill an old one
+                autoFocus // automatically put the cursor in this field the moment the page loads
                 className="input-field pr-12"
               />
               <button
-                type="button"
+                type="button" // important: NOT type="submit", or clicking this eye icon would submit the whole form
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center justify-center w-7 h-7 rounded-lg transition-colors"
                 style={{ color: 'var(--text-muted)' }}
-                aria-label="Toggle password visibility"
+                aria-label="Toggle password visibility" // for accessibility tools, since this button has no visible text
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>

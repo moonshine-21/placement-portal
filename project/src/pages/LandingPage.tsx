@@ -1,27 +1,53 @@
-import { Target, Building2, BrainCircuit, ArrowRight, Sparkles, TrendingUp, Users } from 'lucide-react';
+// ============================================================================
+// src/pages/LandingPage.tsx
+//
+// WHAT THIS FILE IS: the public marketing page shown to a visitor who
+// isn't logged in yet — the "sales pitch" page explaining what the site
+// does, before they sign up or log in. This is almost entirely visual/
+// static content (no data fetching, no state to speak of), so most of the
+// comments below explain the LAYOUT/DESIGN choices rather than logic.
+// ============================================================================
 
+import { Target, Building2, BrainCircuit, ArrowRight, Sparkles, TrendingUp, Users } from 'lucide-react';
+import { useSiteSettings } from '@/lib/siteSettings';
+
+// This page only needs one thing from whoever's using it: a function to
+// call when the visitor clicks a "get started" style button, so App.tsx
+// can decide what to show next (the login page, most likely).
 type Props = {
   onOpenDashboard: () => void;
 };
 
 export function LandingPage({ onOpenDashboard }: Props) {
+  const siteSettings = useSiteSettings();
   return (
     <div className="min-h-screen">
+      {/* ---------- Top navigation bar ---------- */}
       <nav className="glass mx-auto mt-6 flex max-w-6xl items-center justify-between px-6 py-4 animate-slide-down">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)]">
-            <Sparkles size={20} className="text-white" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] overflow-hidden">
+            {siteSettings.logo_url ? (
+              <img src={siteSettings.logo_url} alt={siteSettings.site_name} className="h-full w-full object-cover" />
+            ) : (
+              <Sparkles size={20} className="text-white" />
+            )}
           </div>
-          <span className="font-bold text-[var(--text-primary)]">Smart Placement Cell</span>
+          <span className="font-bold text-[var(--text-primary)]">{siteSettings.site_name}</span>
         </div>
+        {/* This link row is hidden on small/mobile screens (`hidden
+            md:flex`) — on mobile there's just the single "Open" button
+            below instead, to save space. */}
         <div className="hidden items-center gap-6 md:flex">
           <a href="#features" className="text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors">Features</a>
           <a href="#how" className="text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--accent)] transition-colors">How it works</a>
           <button onClick={onOpenDashboard} className="btn-primary btn-sm">Open Dashboard</button>
         </div>
+        {/* The mobile-only equivalent button (`md:hidden` hides it on
+            larger screens, where the row above already has one). */}
         <button onClick={onOpenDashboard} className="btn-primary btn-sm md:hidden">Open</button>
       </nav>
 
+      {/* ---------- Hero section (the big headline at the top) ---------- */}
       <header className="mx-auto max-w-4xl px-4 pt-20 pb-12 text-center">
         <span className="glass-soft inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-[var(--accent)] animate-fade-in">
           <Sparkles size={14} /> AI-powered placements
@@ -42,7 +68,14 @@ export function LandingPage({ onOpenDashboard }: Props) {
         </div>
       </header>
 
+      {/* ---------- Feature highlight cards ---------- */}
       <section id="features" className="mx-auto max-w-6xl px-4 py-16">
+        {/* Rather than write out three nearly-identical <div> cards by
+            hand, we define the three cards' content as a plain array of
+            data, then `.map()` over it to generate the actual HTML — a
+            common React pattern that keeps repeated content easy to edit
+            (add a fourth feature by adding one more line to this list,
+            not by copy-pasting a whole card's worth of markup). */}
         <div className="grid gap-6 md:grid-cols-3 stagger">
           {[
             { icon: Target, title: 'Match Score', desc: 'Every student gets a transparent score showing fit for each company.' },
@@ -51,6 +84,11 @@ export function LandingPage({ onOpenDashboard }: Props) {
           ].map((f) => (
             <div key={f.title} className="glass card-hover p-7">
               <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--accent)]/20 to-[var(--accent-2)]/20 text-[var(--accent)]">
+                {/* `<f.icon ... />` — rendering a component that was
+                    itself stored as a plain piece of data in the array
+                    above. This is valid because in React, a component is
+                    just a function, and functions can be stored in
+                    variables/arrays like any other value. */}
                 <f.icon size={24} />
               </div>
               <h3 className="text-lg font-semibold text-[var(--text-primary)]">{f.title}</h3>
@@ -60,6 +98,7 @@ export function LandingPage({ onOpenDashboard }: Props) {
         </div>
       </section>
 
+      {/* ---------- "How it works" 3-step explainer ---------- */}
       <section id="how" className="mx-auto max-w-4xl px-4 py-16">
         <h2 className="text-center text-3xl font-bold mb-12">How it works</h2>
         <div className="grid gap-6 md:grid-cols-3 stagger">

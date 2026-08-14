@@ -1,3 +1,19 @@
+// ============================================================================
+// src/views/CompaniesBrowseView.tsx
+//
+// WHAT THIS FILE IS: the student-facing "browse companies" page — three
+// screens combined into one file, since they form a single natural flow:
+//   1. CompaniesBrowseView  — the grid of every company, with search + bookmark
+//   2. CompanyPublicView    — a single company's public profile + open jobs
+//   3. ApplyModal           — the actual application form (resume upload, etc)
+//
+// This is the REAL, modern application system (as opposed to the older
+// `companies`/`applications`/`Match` system used by MatchesView.tsx) — it
+// applies to a real CompanyProfile's specific job postings, and works
+// identically whether that company is run by a human or is an AI "bot"
+// (see the is_bot check near the bottom of ApplyModal's submit function).
+// ============================================================================
+
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
@@ -5,49 +21,49 @@ import { useToast } from '@/lib/toast';
 import { uploadPrivateFile, openPrivateFile } from '@/lib/data';
 import { Building2, ArrowLeft, Globe, Mail, Phone, MapPin, Briefcase, Send, X, Bookmark, BookmarkCheck, Search } from 'lucide-react';
 import type { CompanyProfile, Job } from '@/lib/supabase';
-import { Portal } from '@/components/Portal';
 
 type Props = {
   onNavigate: (view: string) => void;
-  preselectCompanyId?: string | null;
-  onPreselectConsumed?: () => void;
 };
 
-export function CompaniesBrowseView({ onNavigate, preselectCompanyId, onPreselectConsumed }: Props) {
+export function CompaniesBrowseView({ onNavigate }: Props) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const [companies, setCompanies] = useState<CompanyProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  // Which company (if any) has been clicked into — when set, this whole
+  // component switches to showing CompanyPublicView instead of the grid
+  // (see the `if (selected) return ...` check below).
   const [selected, setSelected] = useState<CompanyProfile | null>(null);
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
 
   useEffect(() => {
     (async () => {
+      // `.not('org_name', 'eq', '')` filters out any company_profiles row
+      // with a blank org_name — this hides "shell" accounts that were
+      // created (e.g. via signup) but never actually filled out their
+      // company profile yet, so half-empty listings don't clutter the browse page.
       const { data } = await supabase.from('company_profiles').select('*').not('org_name', 'eq', '').order('updated_at', { ascending: false });
-      const list = (data as CompanyProfile[]) || [];
-      setCompanies(list);
+      setCompanies((data as CompanyProfile[]) || []);
       setLoading(false);
-      // Came here from a Match card's "Apply" button, which knows exactly
-      // which company it was pointing at — jump straight to that
-      // company's profile instead of making the student search for it
-      // again in this list.
-      if (preselectCompanyId) {
-        const match = list.find((c) => c.id === preselectCompanyId);
-        if (match) setSelected(match);
-        onPreselectConsumed?.();
-      }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (loading) return <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[1, 2, 3, 4, 5, 6].map((i) => <div key={i} className="skeleton h-44 rounded-2xl" />)}</div>;
 
+  // Adds or removes a bookmark. `e.stopPropagation()` is essential here —
+  // the bookmark button sits ON TOP of the whole card, which itself is
+  // clickable to open the company's profile; without stopping
+  // propagation, clicking the bookmark icon would ALSO trigger opening
+  // the company (since the click "bubbles up" to the card underneath).
   const toggleBookmark = async (e: React.MouseEvent, companyId: string) => {
     e.stopPropagation();
     if (!profile) return;
     if (bookmarkedIds.has(companyId)) {
       await supabase.from('bookmarks').delete().eq('student_id', profile.id).eq('company_id', companyId);
+      // Build a new Set with this ID removed — same "never mutate state
+      // directly, always build a new copy" rule used throughout this app.
       setBookmarkedIds(prev => { const next = new Set(prev); next.delete(companyId); return next; });
       showToast('Bookmark removed', 'info');
     } else {
@@ -57,10 +73,16 @@ export function CompaniesBrowseView({ onNavigate, preselectCompanyId, onPreselec
     }
   };
 
+  // If a company has been selected, render its full public profile
+  // INSTEAD of the grid — this early `return` is what makes this one
+  // component behave like two different "pages."
   if (selected) {
     return <CompanyPublicView company={selected} onBack={() => setSelected(null)} onNavigate={onNavigate} bookmarked={bookmarkedIds.has(selected.id)} onToggleBookmark={toggleBookmark} />;
   }
 
+  // Simple client-side search — filters the already-loaded list in the
+  // browser rather than re-querying the database on every keystroke,
+  // since the full company list is small enough to just keep in memory.
   const q = search.trim().toLowerCase();
   const filtered = q
     ? companies.filter((c) =>
@@ -101,6 +123,11 @@ export function CompaniesBrowseView({ onNavigate, preselectCompanyId, onPreselec
               className="card card-hover relative animate-fade-in"
               style={{ animationDelay: `${i * 0.05}s` }}
             >
+              {/* The entire card body is one big button that opens the
+                  company's profile — the bookmark icon is a SEPARATE
+                  button layered on top (`absolute` positioned), not
+                  nested inside this one, since a button can't legally
+                  contain another button in HTML. */}
               <button onClick={() => setSelected(c)} className="block w-full text-left">
                 <div className="flex items-start gap-3">
                   {c.avatar_url ? <img src={c.avatar_url} alt="" className="h-12 w-12 rounded-xl object-cover" /> : (
@@ -125,13 +152,19 @@ export function CompaniesBrowseView({ onNavigate, preselectCompanyId, onPreselec
   );
 }
 
+// The single-company detail page — shown when a card above is clicked.
+// Kept in this same file (rather than its own separate file) since it's
+// tightly coupled to CompaniesBrowseView and never used anywhere else.
 function CompanyPublicView({ company, onBack, onNavigate, bookmarked, onToggleBookmark }: { company: CompanyProfile; onBack: () => void; onNavigate: (v: string) => void; bookmarked: boolean; onToggleBookmark: (e: React.MouseEvent, companyId: string) => void }) {
-  const { profile, user } = useAuth();
-  const { showToast } = useToast();
   const [jobs, setJobs] = useState<Job[]>([]);
+  // Controls the ApplyModal below: `null` = closed, a real Job = applying
+  // to that SPECIFIC job, or the literal string `'general'` = applying to
+  // the company directly without picking a specific posting.
   const [showApply, setShowApply] = useState<Job | null | 'general'>(null);
 
   useEffect(() => {
+    // Only this company's currently OPEN jobs are shown — closed
+    // postings don't clutter this page.
     supabase.from('jobs').select('*').eq('company_id', company.id).eq('status', 'open').order('created_at', { ascending: false }).then(({ data }) => setJobs((data as Job[]) || []));
   }, [company.id]);
 
@@ -144,6 +177,8 @@ function CompanyPublicView({ company, onBack, onNavigate, bookmarked, onToggleBo
         </button>
       </div>
 
+      {/* Banner + logo header, same visual pattern as
+          CompanyProfileCardModal.tsx, just as a full page instead of a popup. */}
       <div className="card overflow-hidden">
         <div className="relative h-32 bg-gradient-to-br from-[var(--accent)]/20 to-[var(--accent-2)]/20 overflow-hidden">
           {company.banner_url && <img src={company.banner_url} alt="" className="h-full w-full object-cover" />}
@@ -174,6 +209,9 @@ function CompanyPublicView({ company, onBack, onNavigate, bookmarked, onToggleBo
               <div key={j.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div><h4 className="font-medium">{j.job_name}</h4><p className="text-xs text-[var(--text-muted)]">{j.role} · {j.package_lpa} LPA</p></div>
+                  {/* Clicking Apply on a SPECIFIC job passes that job
+                      object into showApply, so ApplyModal knows exactly
+                      which posting this application is for. */}
                   <button onClick={() => setShowApply(j)} className="btn-primary btn-sm"><Send size={12} /> Apply</button>
                 </div>
                 {j.description && <p className="text-xs text-[var(--text-secondary)] mt-2">{j.description}</p>}
@@ -182,6 +220,8 @@ function CompanyPublicView({ company, onBack, onNavigate, bookmarked, onToggleBo
             ))}
           </div>
         )}
+        {/* A general "apply without a specific job" option, always
+            available even if the company has zero open postings listed. */}
         <button onClick={() => setShowApply('general')} className="btn-ghost btn-sm mt-4 w-full"><Send size={14} /> Apply to {company.org_name} directly</button>
       </div>
 
@@ -207,9 +247,13 @@ function CompanyPublicView({ company, onBack, onNavigate, bookmarked, onToggleBo
   );
 }
 
+// The actual application form popup.
 function ApplyModal({ company, job, onClose, onApplied }: { company: CompanyProfile; job: Job | null; onClose: () => void; onApplied: () => void }) {
   const { profile, user } = useAuth();
   const { showToast } = useToast();
+  // Pre-fill name/email from the student's existing profile, so they
+  // don't have to retype what we already know — but still let them edit
+  // it for this specific application (e.g. a different contact email).
   const [fullName, setFullName] = useState(profile?.full_name || '');
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
@@ -222,11 +266,19 @@ function ApplyModal({ company, job, onClose, onApplied }: { company: CompanyProf
     e.preventDefault();
     if (!resumeFile || !user) { showToast('Please attach your resume', 'error'); return; }
     setSubmitting(true);
+
+    // Step 1: upload the resume to PRIVATE storage — it needs a real
+    // student to be logged in to view it later (see openPrivateFile in
+    // src/lib/data.ts), so nobody can grab an applicant's resume from a
+    // public link.
     const resumePath = await uploadPrivateFile('resumes', resumeFile, user.id);
     if (!resumePath) { showToast('Resume upload failed', 'error'); setSubmitting(false); return; }
 
+    // Step 2: also save the (possibly edited) name back onto the
+    // student's own main profile, so it stays in sync going forward.
     await supabase.from('profiles').upsert({ id: user.id, email: user.email, full_name: fullName }, { onConflict: 'id' });
 
+    // Step 3: create the actual application row.
     const { data, error } = await supabase.from('company_applications').insert({
       company_id: company.id, student_id: user.id, full_name: fullName, address, phone, email,
       resume_url: resumePath, resume_filename: resumeFile.name, comment, status: 'pending', job_id: job?.id || null,
@@ -234,6 +286,7 @@ function ApplyModal({ company, job, onClose, onApplied }: { company: CompanyProf
 
     if (error) { showToast('Could not submit application: ' + error.message, 'error'); setSubmitting(false); return; }
 
+    // Step 4: notify the company that a new application has arrived.
     await supabase.from('notifications').insert({
       user_id: company.id, type: 'application',
       title: `New application from ${fullName}`,
@@ -244,10 +297,13 @@ function ApplyModal({ company, job, onClose, onApplied }: { company: CompanyProf
     showToast('Application submitted!', 'success');
     setSubmitting(false);
 
+    // Step 5 (bot companies only): if this company is AI-run, trigger the
+    // server to actually evaluate this application — see
+    // api/bot-evaluate-application.ts. This runs "fire and forget"
+    // (we don't `await` it or block the UI on it) — its result (shortlist/
+    // reject, a DM, maybe a quiz) will simply show up in the
+    // Applications/Messages views on its own within a few seconds.
     if (company.is_bot && (data as any)?.id) {
-      // Fire-and-forget: the AI recruiter's decision (and any DM/quiz it
-      // sends) will show up via the Applications/Messages views on their
-      // own, so there's nothing here worth blocking the UI on.
       supabase.auth.getSession().then(({ data: sessionData }) => {
         const token = sessionData.session?.access_token;
         if (!token) return;
@@ -263,7 +319,6 @@ function ApplyModal({ company, job, onClose, onApplied }: { company: CompanyProf
   };
 
   return (
-    <Portal>
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in" onClick={onClose}>
       <form onSubmit={submit} className="glass w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto scroll-thin animate-fade-in-scale" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
@@ -278,12 +333,19 @@ function ApplyModal({ company, job, onClose, onApplied }: { company: CompanyProf
             <div><label className="mb-1.5 block text-sm font-medium text-[var(--text-secondary)]">Email</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="input-field" /></div>
           </div>
           <div><label className="mb-1.5 block text-sm font-medium text-[var(--text-secondary)]">Address</label><input value={address} onChange={(e) => setAddress(e.target.value)} className="input-field" /></div>
-          <div><label className="mb-1.5 block text-sm font-medium text-[var(--text-secondary)]">Resume (PDF or image — required)</label><label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[var(--border-strong)] p-4 transition-all hover:border-[var(--accent)]"><input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) setResumeFile(f); }} /><span className="text-sm text-[var(--text-secondary)]">{resumeFile ? resumeFile.name : 'Click to choose file'}</span></label></div>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-[var(--text-secondary)]">Resume (PDF or image — required)</label>
+            {/* Styled file-upload box, same "invisible input wrapped in a
+                clickable label" pattern used in ProjectsView.tsx. */}
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[var(--border-strong)] p-4 transition-all hover:border-[var(--accent)]">
+              <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) setResumeFile(f); }} />
+              <span className="text-sm text-[var(--text-secondary)]">{resumeFile ? resumeFile.name : 'Click to choose file'}</span>
+            </label>
+          </div>
           <div><label className="mb-1.5 block text-sm font-medium text-[var(--text-secondary)]">Comment (optional)</label><textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} className="input-field" /></div>
           <button type="submit" disabled={submitting} className="btn-primary w-full">{submitting ? 'Submitting…' : 'Submit Application'}</button>
         </div>
       </form>
     </div>
-    </Portal>
   );
 }

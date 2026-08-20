@@ -1,0 +1,538 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =============================================================================
+   LUMEN STAGE — design language
+   Not a dashboard. Not glassmorphism. Not a SaaS sidebar app.
+   Information lives on a STAGE. Navigation is an INTENT SPINE.
+   ============================================================================= */
+
+:root {
+  --ink: #0e0d0c;
+  --ink-2: #161412;
+  --ink-3: #1f1c19;
+  --bone: #e8e2d6;
+  --bone-dim: #a89f8f;
+  --bone-mute: #6e665c;
+  --copper: #c47b3a;
+  --copper-soft: rgba(196, 123, 58, 0.18);
+  --copper-glow: rgba(196, 123, 58, 0.35);
+  --moss: #6b8f71;
+  --rose: #c45c5c;
+  --line: rgba(232, 226, 214, 0.08);
+  --line-strong: rgba(232, 226, 214, 0.16);
+
+  --bg-base: var(--ink);
+  --bg-elevated: var(--ink-2);
+  --surface: rgba(232, 226, 214, 0.04);
+  --surface-hover: rgba(232, 226, 214, 0.07);
+  --border: var(--line);
+  --border-strong: var(--line-strong);
+  --text-primary: var(--bone);
+  --text-secondary: var(--bone-dim);
+  --text-muted: var(--bone-mute);
+  --accent: var(--copper);
+  --accent-2: #d4a574;
+  --accent-glow: var(--copper-glow);
+  --success: var(--moss);
+  --warning: #c4a35a;
+  --error: var(--rose);
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.55);
+  --radius: 4px;
+  --radius-lg: 8px;
+  --blur: 0px;
+  --surface-solid: rgba(22, 20, 18, 0.98);
+  --glass-panel: var(--ink-2);
+  --glass-panel-strong: var(--ink-3);
+  --header-glass: var(--ink);
+
+  --spine-h: 56px;
+  --topbar-h: 52px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --font: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+:root.theme-light {
+  --ink: #f4f0e8;
+  --ink-2: #ebe6db;
+  --ink-3: #e0d9cb;
+  --bone: #1a1714;
+  --bone-dim: #4a433c;
+  --bone-mute: #7a7166;
+  --copper: #a65d28;
+  --copper-soft: rgba(166, 93, 40, 0.12);
+  --copper-glow: rgba(166, 93, 40, 0.22);
+  --line: rgba(26, 23, 20, 0.08);
+  --line-strong: rgba(26, 23, 20, 0.16);
+  --bg-base: var(--ink);
+  --bg-elevated: var(--ink-2);
+  --surface: rgba(26, 23, 20, 0.04);
+  --surface-hover: rgba(26, 23, 20, 0.07);
+  --border: var(--line);
+  --border-strong: var(--line-strong);
+  --text-primary: var(--bone);
+  --text-secondary: var(--bone-dim);
+  --text-muted: var(--bone-mute);
+  --accent: var(--copper);
+  --accent-2: #8a4e22;
+  --accent-glow: var(--copper-glow);
+  --surface-solid: rgba(244, 240, 232, 0.98);
+  --glass-panel: var(--ink-2);
+  --glass-panel-strong: var(--ink-3);
+  --header-glass: var(--ink);
+  --shadow: 0 12px 40px rgba(26, 23, 20, 0.08);
+  --shadow-lg: 0 24px 64px rgba(26, 23, 20, 0.12);
+}
+
+:root.theme-aurora,
+:root.theme-midnight,
+:root.theme-sunset,
+:root.theme-ocean {
+  --ink: #0e0d0c;
+  --ink-2: #161412;
+  --ink-3: #1f1c19;
+  --bone: #e8e2d6;
+  --bone-dim: #a89f8f;
+  --bone-mute: #6e665c;
+  --bg-base: var(--ink);
+  --bg-elevated: var(--ink-2);
+  --text-primary: var(--bone);
+  --text-secondary: var(--bone-dim);
+  --text-muted: var(--bone-mute);
+  --border: var(--line);
+  --border-strong: var(--line-strong);
+  --surface: rgba(232, 226, 214, 0.04);
+  --surface-hover: rgba(232, 226, 214, 0.07);
+  --surface-solid: rgba(22, 20, 18, 0.98);
+  --glass-panel: var(--ink-2);
+  --glass-panel-strong: var(--ink-3);
+  --header-glass: var(--ink);
+}
+
+:root.theme-aurora { --copper: #8b6bb0; --accent: #8b6bb0; --accent-2: #a88cc4; }
+:root.theme-midnight { --copper: #5b7c99; --accent: #5b7c99; --accent-2: #7a9ab5; }
+:root.theme-sunset { --copper: #c47b3a; --accent: #c47b3a; --accent-2: #d4a574; }
+:root.theme-ocean { --copper: #4a8b7a; --accent: #4a8b7a; --accent-2: #6ba89a; }
+
+html {
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4 {
+  line-height: 1.15;
+  font-weight: 550;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background: var(--bg-base);
+}
+
+html.has-wallpaper .app-bg {
+  background-color: var(--bg-base);
+  background-image: var(--wallpaper-url);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+html.has-wallpaper .app-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--bg-base);
+  opacity: 0.78;
+}
+
+.particles-canvas { display: none; }
+
+.glass, .card, .modal-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+
+.card { padding: 1.25rem 1.35rem; }
+.card-hover:hover { border-color: var(--border-strong); }
+
+.glass-soft {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.modal-panel {
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Lumen Stage shell */
+.lumen-root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-base);
+}
+
+.lumen-top {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-base);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+.lumen-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.lumen-brand-mark {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--copper);
+  flex-shrink: 0;
+}
+
+.lumen-brand-name {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--bone-mute);
+}
+
+.lumen-stage-title {
+  font-size: 0.95rem;
+  font-weight: 550;
+  color: var(--bone);
+  letter-spacing: -0.01em;
+}
+
+.lumen-stage-sub {
+  font-size: 0.72rem;
+  color: var(--bone-mute);
+  margin-top: 1px;
+}
+
+.lumen-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.lumen-icon-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--bone-dim);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+
+.lumen-icon-btn:hover {
+  color: var(--bone);
+  border-color: var(--line);
+}
+
+.lumen-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.55rem 0.25rem 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--bone);
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease);
+}
+
+.lumen-identity:hover { border-color: var(--copper); }
+
+.lumen-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--ink-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--bone);
+}
+
+.lumen-identity-name {
+  font-size: 0.75rem;
+  font-weight: 500;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumen-stage {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.5rem 1.5rem calc(var(--spine-h) + 1.75rem);
+}
+
+@media (min-width: 1024px) {
+  .lumen-stage {
+    padding: 2rem 2.5rem calc(var(--spine-h) + 2rem);
+  }
+}
+
+/* Intent Spine — bottom nav (replaces sidebar) */
+.lumen-spine {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  height: var(--spine-h);
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--line);
+  background: var(--ink-2);
+  padding: 0 0.35rem;
+  overflow-x: auto;
+}
+
+.lumen-spine-item {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.8rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bone-mute);
+  background: transparent;
+  border: none;
+  border-top: 2px solid transparent;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+
+.lumen-spine-item:hover { color: var(--bone-dim); }
+
+.lumen-spine-item.is-active {
+  color: var(--copper);
+  border-top-color: var(--copper);
+}
+
+.lumen-spine-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: stretch;
+  border-left: 1px solid var(--line);
+  padding-left: 0.15rem;
+}
+
+@media (max-width: 768px) {
+  .lumen-identity-name,
+  .lumen-stage-sub { display: none; }
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.1rem;
+  font-size: 0.85rem;
+  font-weight: 550;
+  color: var(--ink);
+  background: var(--copper);
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--bone);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.btn-secondary:hover {
+  border-color: var(--copper);
+  color: var(--copper);
+}
+
+.input-field {
+  width: 100%;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  background: var(--ink-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+}
+.input-field:focus { border-color: var(--copper); }
+
+select.input-field {
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a89f8f' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  padding-right: 2.5rem;
+}
+
+.dropdown-panel {
+  background: var(--ink-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
+.scroll-thin::-webkit-scrollbar { width: 4px; height: 4px; }
+
+.skeleton {
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.animate-fade-in,
+.animate-fade-in-scale,
+.animate-slide-down,
+.stagger > * {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+.lumen-eyebrow {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--bone-mute);
+  margin-bottom: 0.35rem;
+}
+
+.lumen-display {
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  font-weight: 550;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--bone);
+}
+
+.lumen-signals {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 1.75rem;
+}
+
+@media (max-width: 768px) {
+  .lumen-signals { grid-template-columns: repeat(2, 1fr); }
+}
+
+.lumen-signal {
+  background: var(--ink-2);
+  padding: 1.15rem 1.25rem;
+  min-height: 100px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.lumen-signal-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bone-mute);
+}
+
+.lumen-signal-value {
+  font-size: 1.85rem;
+  font-weight: 550;
+  letter-spacing: -0.03em;
+  color: var(--bone);
+  line-height: 1;
+}
+
+.lumen-signal-meta {
+  font-size: 0.72rem;
+  color: var(--bone-dim);
+  margin-top: 0.35rem;
+}
+
+.typing-dots span {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 2px;
+  border-radius: 50%;
+  background: var(--copper);
+  opacity: 0.5;
+}

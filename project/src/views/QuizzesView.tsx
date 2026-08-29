@@ -41,6 +41,8 @@ export function QuizzesView() {
   const [saving, setSaving] = useState(false);
   const [sendTarget, setSendTarget] = useState<QuizListItem | null>(null); // which quiz's "send to applicant" popup is open, if any
   const [resultsTarget, setResultsTarget] = useState<QuizListItem | null>(null); // which quiz's "results" popup is open, if any
+  const [deleteTarget, setDeleteTarget] = useState<QuizListItem | null>(null); // which quiz's delete confirmation popup is open, if any
+  const [deleting, setDeleting] = useState(false);
 
   // The in-progress new-quiz form's data.
   const [title, setTitle] = useState('');
@@ -106,10 +108,12 @@ export function QuizzesView() {
   };
 
   const remove = async (quiz: QuizListItem) => {
-    if (!confirm(`Delete "${quiz.title}"? This can't be undone.`)) return;
+    setDeleting(true);
     const { error } = await deleteQuiz(quiz.id);
+    setDeleting(false);
     if (error) return showToast('Could not delete: ' + error, 'error');
-    load();
+    setQuizzes((qs) => qs.filter((q) => q.id !== quiz.id));
+    showToast('Quiz deleted', 'info');
   };
 
   if (loading) return <div className="space-y-3">{[1, 2, 3].map((i) => <div key={i} className="skeleton h-24" />)}</div>;
@@ -135,7 +139,7 @@ export function QuizzesView() {
             <div key={q.id} className="card space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <h3 className="font-semibold">{q.title}</h3>
-                <button onClick={() => remove(q)} className="flex-shrink-0 rounded-lg p-1 text-[var(--text-muted)] hover:bg-rose-500/10 hover:text-rose-400">
+                <button onClick={() => setDeleteTarget(q)} className="flex-shrink-0 rounded-lg p-1 text-[var(--text-muted)] hover:bg-rose-500/10 hover:text-rose-400">
                   <Trash2 size={15} />
                 </button>
               </div>
@@ -239,6 +243,38 @@ export function QuizzesView() {
           they scored, defined below. */}
       {resultsTarget && (
         <QuizResultsModal quiz={resultsTarget} onClose={() => setResultsTarget(null)} />
+      )}
+
+      {/* The app's own delete-confirmation popup — same pattern used in
+          MessagesView/JobsView — instead of the browser's native
+          window.confirm(), which renders as plain OS chrome stamped with
+          the site's raw URL rather than looking like part of the app. */}
+      {deleteTarget && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+          onClick={() => setDeleteTarget(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-5 shadow-xl animate-fade-in-scale"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-semibold text-[var(--text-primary)]">Delete "{deleteTarget.title}"?</p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">This can't be undone.</p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button onClick={() => setDeleteTarget(null)} className="btn-ghost btn-sm">
+                Cancel
+              </button>
+              <button
+                disabled={deleting}
+                onClick={() => { const q = deleteTarget; setDeleteTarget(null); remove(q); }}
+                className="flex items-center gap-1.5 rounded-xl bg-rose-500 px-3.5 py-2 text-sm font-medium text-white hover:bg-rose-600 disabled:opacity-60"
+              >
+                <Trash2 size={14} /> Delete
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

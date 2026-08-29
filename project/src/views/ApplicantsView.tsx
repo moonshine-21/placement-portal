@@ -14,6 +14,7 @@ import { useToast } from '@/lib/toast';
 import { useFeatureFlags } from '@/lib/featureFlags';
 import { openPrivateFile, timeAgo } from '@/lib/data';
 import { FileText, MessageSquare, Phone, Eye } from 'lucide-react';
+import { Select } from '@/components/Select';
 import type { CompanyApplication } from '@/lib/supabase';
 
 type Props = {
@@ -106,14 +107,18 @@ export function ApplicantsView({ onNavigate, onOpenConversation, onStartCall }: 
                 </div>
                 {/* The status dropdown IS the status-changing control —
                     picking a new option immediately calls updateStatus,
-                    there's no separate "save" step. */}
-                <select
+                    there's no separate "save" step. This uses the app's own
+                    custom Select (instead of a plain native <select>) so the
+                    opened options panel is styled to match the rest of the
+                    dark UI, rather than rendering as the browser's plain
+                    light-background native dropdown list. */}
+                <Select
                   value={a.status}
-                  onChange={(e) => updateStatus(a, e.target.value)}
-                  className={`input-field !py-1.5 !text-xs !w-auto rounded-lg font-medium ${statusColor(a.status)}`}
-                >
-                  {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                  onChange={(status) => updateStatus(a, status)}
+                  options={[...STATUSES]}
+                  className="!w-auto"
+                  triggerClassName={`!py-1.5 !text-xs !w-auto !min-w-[7rem] rounded-lg font-medium ${statusColor(a.status)}`}
+                />
               </div>
               <div className="mt-3 flex items-center gap-2 flex-wrap">
                 {/* Resume link only shown if they actually uploaded one

@@ -51,7 +51,8 @@ type Props = {
   onChange: (value: string) => void;
   options: (string | Option)[]; // each entry can be a plain string OR a { value, label } pair
   placeholder?: string;         // shown when nothing is selected yet
-  className?: string;           // lets the calling code add extra layout styling (e.g. width)
+  className?: string;           // lets the calling code add extra layout styling to the outer wrapper (e.g. width)
+  triggerClassName?: string;    // lets the calling code add extra styling directly to the visible trigger button (e.g. a status color badge)
 };
 
 // Converts a plain string option into the full { value, label } shape, so
@@ -61,7 +62,7 @@ function normalize(opt: string | Option): Option {
   return typeof opt === 'string' ? { value: opt, label: opt } : opt;
 }
 
-export function Select({ value, onChange, options, placeholder = 'Select…', className = '' }: Props) {
+export function Select({ value, onChange, options, placeholder = 'Select…', className = '', triggerClassName = '' }: Props) {
   const [open, setOpen] = useState(false); // is the dropdown panel currently showing?
   // A "ref" is React's way of getting a direct handle on an actual HTML
   // element on the page — here, the trigger button, so we can both check
@@ -130,7 +131,7 @@ export function Select({ value, onChange, options, placeholder = 'Select…', cl
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="input-field flex items-center justify-between text-left"
+        className={`input-field flex items-center justify-between text-left ${triggerClassName}`}
         // `aria-*` attributes here aren't visual — they help screen
         // readers (accessibility tools for visually impaired users)
         // understand "this is a dropdown, and here's whether it's

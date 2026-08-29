@@ -259,27 +259,51 @@ export function CompanyProfileEditorView() {
           </div>
         </div>
         <div className="px-6 pb-6">
-          {/* The logo circle overlaps the bottom edge of the banner
+          {/* The logo box still overlaps the bottom edge of the banner
               (`-mt-10`), a common profile-card visual pattern also seen
-              in CompanyProfileCardModal.tsx. */}
-          <div className="relative -mt-10 mb-4 inline-block">
-            <div className="h-20 w-20 rounded-2xl border-4 border-[var(--bg-elevated)] bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] overflow-hidden flex items-center justify-center">
-              {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : <Building2 size={28} className="text-white" />}
+              in CompanyProfileCardModal.tsx — but its upload/remove
+              controls now sit BESIDE it in a normal flex row instead of
+              as small badges absolutely-positioned on its corner. The
+              badge approach put those buttons half on top of the logo
+              image itself (and, since this whole block sits over the
+              banner, effectively behind/under it depending on upload
+              order) rather than clearly next to it.
+
+              `relative z-10` on this row is required, not decorative:
+              the banner `<div>` above is `position: relative`, which
+              makes it a POSITIONED element. Per the CSS stacking spec,
+              ALL positioned elements paint above ALL non-positioned
+              in-flow elements within the same containing block —
+              regardless of DOM order. Without giving this row its own
+              `position` too, the (non-positioned) logo row was losing
+              to the (positioned) banner despite coming later in the
+              markup, which is exactly why the banner appeared to sit "on
+              top of" the logo instead of the other way around. */}
+          <div className="flex items-end gap-4 -mt-10 mb-4 relative z-10">
+            <div className="h-20 w-20 flex-shrink-0 rounded-2xl border-4 border-[var(--bg-elevated)] bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] overflow-hidden flex items-center justify-center">
+              {/* `object-top` (rather than the default centered crop)
+                  keeps the top of an uploaded photo in frame — the
+                  bit most likely to matter for a logo/headshot-style
+                  image — instead of a wide/tall upload getting
+                  center-cropped and clipping exactly that. */}
+              {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover object-top" /> : <Building2 size={28} className="text-white" />}
             </div>
-            <label className="absolute -bottom-1 -right-1 flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg bg-[var(--surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] hover:text-[var(--accent)]">
-              <Upload size={14} />
-              <input type="file" accept="image/*" hidden onChange={handleAvatar} />
-            </label>
-            {avatarUrl && (
-              <button
-                type="button"
-                onClick={handleRemoveAvatar}
-                title="Remove logo"
-                className="absolute -bottom-1 -right-9 flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--surface)] border border-[var(--border-strong)] text-[var(--text-secondary)] hover:text-rose-400 hover:border-rose-400"
-              >
-                <Trash2 size={14} />
-              </button>
-            )}
+            <div className="flex items-center gap-2 pb-1">
+              <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]">
+                <Upload size={14} /> {avatarUrl ? 'Change logo' : 'Upload logo'}
+                <input type="file" accept="image/*" hidden onChange={handleAvatar} />
+              </label>
+              {avatarUrl && (
+                <button
+                  type="button"
+                  onClick={handleRemoveAvatar}
+                  title="Remove logo"
+                  className="flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] hover:text-rose-400 hover:border-rose-400"
+                >
+                  <Trash2 size={14} /> Remove
+                </button>
+              )}
+            </div>
           </div>
           <p className="text-sm text-[var(--text-muted)]">Optional — banner and logo appear on your public company profile.</p>
         </div>

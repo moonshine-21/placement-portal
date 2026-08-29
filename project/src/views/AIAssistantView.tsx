@@ -105,23 +105,32 @@ type ChatMessage = {
 const CHAT_STORAGE_KEY = 'ai_career_assistant_chat';
 const CHAT_TTL_MS = 30 * 60 * 1000; // 30 minutes of inactivity
 
-function loadPersistedChat(): ChatMessage[] | null {
+type PersistedChat = { messages: ChatMessage[]; updatedAt: number; lastSource?: 'gemini' | 'backend' | 'offline' | null };
+
+// Reads the whole persisted record (messages + the source of the last
+// reply). Previously only `messages` was restored on reload, which is why
+// the header status could show the generic "Ready · profile-aware" text
+// even right after reopening a chat whose last real answer came from
+// quick-tips (offline) mode — `lastSource` lived only in React state and
+// was silently lost on every refresh. Restoring it here keeps the header
+// honest across reloads instead of just resetting to a neutral default.
+function loadPersistedChatRecord(): PersistedChat | null {
   try {
     const raw = localStorage.getItem(CHAT_STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { messages: ChatMessage[]; updatedAt: number };
+    const parsed = JSON.parse(raw) as PersistedChat;
     if (!parsed?.messages?.length || !parsed.updatedAt) return null;
     if (Date.now() - parsed.updatedAt > CHAT_TTL_MS) {
       localStorage.removeItem(CHAT_STORAGE_KEY);
       return null;
     }
-    return parsed.messages;
+    return parsed;
   } catch {
     return null;
   }
 }
 
-function persistChat(messages: ChatMessage[]) {
+function persistChat(messages: ChatMessage[], lastSource: 'gemini' | 'backend' | 'offline' | null) {
   try {
     if (messages.length <= 1) {
       // only the welcome message — don't bother storing
@@ -130,7 +139,7 @@ function persistChat(messages: ChatMessage[]) {
     }
     localStorage.setItem(
       CHAT_STORAGE_KEY,
-      JSON.stringify({ messages, updatedAt: Date.now() })
+      JSON.stringify({ messages, updatedAt: Date.now(), lastSource })
     );
   } catch {
     /* quota / private mode — ignore */
@@ -144,19 +153,20 @@ const WELCOME_MESSAGE: ChatMessage = {
 
 export function AIAssistantView() {
   const { profile } = useAuth();
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    const saved = loadPersistedChat();
-    return saved && saved.length > 0 ? saved : [WELCOME_MESSAGE];
-  });
+  const initialChat = useRef(loadPersistedChatRecord()).current;
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    initialChat && initialChat.messages.length > 0 ? initialChat.messages : [WELCOME_MESSAGE]
+  );
   const [input, setInput] = useState('');
   const [typing, setTyping] = useState(false);
-  const [showSuggestions, setShowSuggestions] = useState(() => {
-    const saved = loadPersistedChat();
-    return !(saved && saved.length > 1);
-  });
+  const [showSuggestions, setShowSuggestions] = useState(
+    () => !(initialChat && initialChat.messages.length > 1)
+  );
   const [matches, setMatches] = useState<Match[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [lastSource, setLastSource] = useState<'gemini' | 'backend' | 'offline' | null>(null);
+  const [lastSource, setLastSource] = useState<'gemini' | 'backend' | 'offline' | null>(
+    () => initialChat?.lastSource ?? null
+  );
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -169,8 +179,8 @@ export function AIAssistantView() {
   // Persist chat on every change + refresh TTL so inactivity is measured
   // from the last message (or last visit while messages exist).
   useEffect(() => {
-    persistChat(messages);
-  }, [messages]);
+    persistChat(messages, lastSource);
+  }, [messages, lastSource]);
 
   // Touch the stored timestamp while the user stays on this page so
   // navigating away and back within 30 min keeps history, but 30 min of
@@ -333,11 +343,29 @@ You currently have <strong>${skills.length} skills</strong>, CGPA <strong>${cgpa
     // through silently if not deployed (e.g. local `vite dev` without
     // `vercel dev` running alongside it, where this endpoint doesn't exist).
     try {
-      const res = await fetch('/api/ai-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, profile, matches }),
-      });
+      // Give the backend a bounded amount of time to answer. Without this,
+      // a slow/overloaded moment upstream (Gemini rate-limited, edge
+      // function retrying) could leave the request hanging well past what
+      // feels like "the assistant is broken" before ever reaching the
+      // catch block below and falling back — this way a stuck request
+      // fails over to quick-tips mode quickly and predictably instead.
+      const controller = new AbortController();
+      // Bounded a little above the server's own worst-case budget (Groq
+      // ~8s + Gemini ~14s ≈ 22s if both providers are struggling) so a
+      // slow-but-still-progressing backend call isn't cut off client-side
+      // before it ever gets the chance to finish.
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      let res: Response;
+      try {
+        res = await fetch('/api/ai-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, profile, matches }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       if (res.ok) {
         const data = await res.json();
         if (data.ai && data.reply) return { text: formatAIText(data.reply), source: 'backend' };
@@ -462,7 +490,23 @@ Rules:
   // Sends a question — either typed into the input box, or from a
   // clicked suggestion chip (`text` parameter lets a suggestion chip
   // trigger this directly with its own text, bypassing the input box).
+  //
+  // IMPORTANT: `typing` doubles as a "one request at a time" lock. Before
+  // this guard existed, nothing stopped someone from firing a SECOND
+  // message while the first one was still waiting on a reply — both
+  // requests would run at once, but there's only one shared `typing`
+  // flag between them. Whichever request happened to finish FIRST would
+  // clear that flag and hide the "..." indicator for BOTH, even if the
+  // other question was still being answered in the background (a reply
+  // can legitimately take upwards of 20+ seconds). The assistant LOOKED
+  // like it had stopped mid-conversation, when really an earlier
+  // question's reply was just about to land out of order. Blocking new
+  // sends while one is already in flight makes the indicator trustworthy
+  // again — it's only ever showing/hiding for the ONE request that's
+  // actually running — and guarantees every reply lands right under the
+  // question that triggered it, instead of arriving late and confusing.
   const send = async (text?: string) => {
+    if (typing) return;
     const question = (text || input).trim();
     if (!question) return;
     setMessages((prev) => [...prev, { role: 'user', text: question }]);
@@ -571,7 +615,8 @@ Rules:
                 <button
                   key={s}
                   onClick={() => send(s)}
-                  className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-2 text-xs font-medium text-[var(--accent)] transition-all hover:bg-[var(--accent)]/20 hover:scale-105"
+                  disabled={typing}
+                  className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-2 text-xs font-medium text-[var(--accent)] transition-all hover:bg-[var(--accent)]/20 hover:scale-105 disabled:opacity-40 disabled:hover:scale-100"
                 >
                   {s}
                 </button>
@@ -588,10 +633,11 @@ Rules:
               value={input}
               onChange={(e) => { setInput(e.target.value); setShowSuggestions(false); }}
               onKeyDown={(e) => { if (e.key === 'Enter') send(); }}
-              placeholder="Ask about skills, companies, roadmap…"
-              className="input-field flex-1"
+              placeholder={typing ? 'Waiting for a reply…' : 'Ask about skills, companies, roadmap…'}
+              disabled={typing}
+              className="input-field flex-1 disabled:opacity-60"
             />
-            <button onClick={() => send()} disabled={!input.trim()} className="btn-primary h-10 w-10 !px-0 flex-shrink-0">
+            <button onClick={() => send()} disabled={!input.trim() || typing} className="btn-primary h-10 w-10 !px-0 flex-shrink-0">
               <Send size={18} />
             </button>
           </div>

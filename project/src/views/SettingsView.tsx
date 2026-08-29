@@ -12,17 +12,19 @@ import { useTheme, getWallpaper, setWallpaper, type Theme } from '@/lib/theme';
 import { useToast } from '@/lib/toast';
 import { supabase } from '@/lib/supabase';
 import { uploadPublicFile } from '@/lib/data';
-import { Moon, Sun, Palette, Mail, Lock, Trash2, Image, LogOut, Check } from 'lucide-react';
+import { Moon, Sun, Palette, Mail, Lock, Trash2, Image, LogOut, Check, X } from 'lucide-react';
 
 type Props = {
   onSignOut: () => void; // provided by App.tsx — handles both signing out AND resetting back to the landing page
 };
 
 export function SettingsView({ onSignOut }: Props) {
-  const { profile, user, refreshProfile } = useAuth();
+  const { profile, user } = useAuth();
   const { theme, setTheme } = useTheme();
   const { showToast } = useToast();
   const [wallpaper, setWallpaperState] = useState(getWallpaper());
+  const [confirmDelete, setConfirmDelete] = useState(false); // is the app's own (not the browser's native) delete-confirmation popup open?
+  const [deleting, setDeleting] = useState(false);
   // A ref pointing at the (hidden) file-picker input, so clicking a
   // styled button elsewhere on the page can trigger it programmatically
   // (`wallpaperInputRef.current?.click()`) rather than needing to be a
@@ -108,15 +110,43 @@ export function SettingsView({ onSignOut }: Props) {
     showToast('Password reset link sent to your email', 'success');
   };
 
-  // Account deletion isn't actually implemented as a real, automated
-  // action in this app — it requires TWO separate confirmation popups
-  // (deliberately making it hard to trigger by accident, given how
-  // irreversible it would be), and then just tells the person to contact
-  // support rather than performing a real deletion here.
+  // Actually, permanently deletes the account. This has to happen on the
+  // server (see api/account-delete.ts) using Supabase's admin key — the
+  // browser is never allowed to delete an auth.users row directly. Every
+  // other table (profile, company_profiles, jobs, applications, messages,
+  // friends, etc.) cascades from that one row, so a single successful call
+  // here removes literally everything tied to this account in one shot —
+  // for a company account, that includes its job postings, which is why
+  // it disappears from students' "companies hiring" list immediately.
+  //
+  // The "are you sure" step lives below as the app's own styled popup (see
+  // confirmDelete) instead of the browser's native `window.confirm()` —
+  // that native dialog is rendered by the browser itself (stamped with the
+  // site's raw URL), so it always looked out of place next to the rest of
+  // the app's UI. This function just performs the deletion once that
+  // in-app popup has already confirmed it.
   const deleteAccount = async () => {
-    if (!confirm('Are you absolutely sure? This will permanently delete your account and all associated data. This cannot be undone.')) return;
-    if (!confirm('Last warning: your profile, matches, applications, messages, and friends will all be permanently deleted. Continue?')) return;
-    showToast('Account deletion requires contacting support. Your data has been flagged for removal.', 'info');
+    setDeleting(true);
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) { setDeleting(false); showToast('Not signed in', 'error'); return; }
+    try {
+      const res = await fetch('/api/account-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(body.error || 'Account deletion failed — please try again.', 'error');
+        setDeleting(false);
+        return;
+      }
+      showToast('Your account has been permanently deleted.', 'success');
+      onSignOut();
+    } catch {
+      showToast('Account deletion failed — please try again.', 'error');
+      setDeleting(false);
+    }
   };
 
   return (
@@ -212,7 +242,7 @@ export function SettingsView({ onSignOut }: Props) {
             <span className="text-sm font-medium text-rose-400">Delete Account</span>
           </div>
           <p className="text-xs text-[var(--text-muted)] mb-3">Permanently delete your account and all associated data. This cannot be undone.</p>
-          <button onClick={deleteAccount} className="btn-danger btn-sm">
+          <button onClick={() => setConfirmDelete(true)} className="btn-danger btn-sm">
             Delete Account
           </button>
         </div>
@@ -231,6 +261,43 @@ export function SettingsView({ onSignOut }: Props) {
           <LogOut size={16} /> Sign Out
         </button>
       </div>
+
+      {/* The app's own delete-confirmation popup — replaces the browser's
+          native window.confirm(), which rendered as an ugly OS-chrome
+          dialog stamped with the site's raw URL instead of looking like
+          part of the app (the same pattern MessagesView.tsx uses for
+          confirming a message delete). */}
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+          onClick={() => { if (!deleting) setConfirmDelete(false); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-5 shadow-xl animate-fade-in-scale"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2">
+              <Trash2 size={18} className="text-rose-400" />
+              <p className="text-sm font-semibold text-[var(--text-primary)]">Delete your account?</p>
+            </div>
+            <p className="mt-2 text-xs text-[var(--text-muted)]">
+              This permanently deletes your profile, applications, jobs, messages, and friends. This cannot be undone.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button onClick={() => setConfirmDelete(false)} disabled={deleting} className="btn-ghost btn-sm">
+                Cancel
+              </button>
+              <button
+                onClick={deleteAccount}
+                disabled={deleting}
+                className="flex items-center gap-1.5 rounded-xl bg-rose-500 px-3.5 py-2 text-sm font-medium text-white hover:bg-rose-600 disabled:opacity-60"
+              >
+                <X size={14} /> {deleting ? 'Deleting…' : 'Delete Account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

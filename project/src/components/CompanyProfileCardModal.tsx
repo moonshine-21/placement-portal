@@ -101,10 +101,15 @@ export function CompanyProfileCardModal({ companyId, onClose }: Props) {
             <div className="p-6 pt-0">
               {/* The logo overlaps the bottom of the banner (`-mt-8`
                   pulls it up), a common profile-card visual style. Falls
-                  back to a generic building icon if no logo was uploaded. */}
-              <div className="-mt-8 mb-3 flex items-end gap-3">
+                  back to a generic building icon if no logo was uploaded.
+                  `relative z-10`: the banner div above is `position:
+                  relative`, so per CSS stacking rules it always paints
+                  above non-positioned siblings regardless of DOM order —
+                  without this, the logo lost to the banner and looked
+                  like it sat underneath it. */}
+              <div className="-mt-8 mb-3 flex items-end gap-3 relative z-10">
                 {company.avatar_url ? (
-                  <img src={company.avatar_url} alt="" className="h-16 w-16 rounded-2xl border-2 border-[var(--bg-elevated)] object-cover" />
+                  <img src={company.avatar_url} alt="" className="h-16 w-16 rounded-2xl border-2 border-[var(--bg-elevated)] object-cover object-top" />
                 ) : (
                   <div className="flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-[var(--bg-elevated)] bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] text-white">
                     <Building2 size={24} />

@@ -152,9 +152,13 @@ type Props = {
   onNavigate: (view: ViewKey) => void;
   onSignOut: () => void;
   children: React.ReactNode; // whatever page App.tsx decided to show, placed inside this shell
+  // Content that must survive navigation instead of being torn down and
+  // rebuilt every time `currentView` changes — see the comment above the
+  // `<main>` block below for why `children` alone can't do this.
+  persistentContent?: React.ReactNode;
 };
 
-export function AppShell({ currentView, onNavigate, onSignOut, children }: Props) {
+export function AppShell({ currentView, onNavigate, onSignOut, children, persistentContent }: Props) {
   const { profile } = useAuth();
   const { theme, setTheme } = useTheme();
   const flags = useFeatureFlags();
@@ -574,11 +578,24 @@ export function AppShell({ currentView, onNavigate, onSignOut, children }: Props
             the view changes tells React "treat this as a brand new
             element, not an update to the old one" — which is what
             re-triggers the `animate-fade-in` CSS animation fresh on every
-            single page navigation, instead of only playing once ever. */}
+            single page navigation, instead of only playing once ever.
+
+            That "treat this as brand new" behavior is exactly why
+            `persistentContent` (e.g. the AI Assistant chat — see App.tsx)
+            is rendered as a SEPARATE sibling below, entirely outside this
+            keyed div, instead of being passed in through `children`.
+            Anything inside the `key={currentView}` div gets fully torn
+            down and rebuilt from scratch on every navigation — fine for a
+            normal page, but it would silently kill an in-progress AI
+            reply the instant you clicked to another tab. Keeping it
+            outside the keyed wrapper means React never unmounts it while
+            you're elsewhere in the app; App.tsx just toggles its CSS
+            visibility instead. */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
           <div key={currentView} className="animate-fade-in">
             {children}
           </div>
+          {persistentContent}
         </main>
       </div>
     </div>

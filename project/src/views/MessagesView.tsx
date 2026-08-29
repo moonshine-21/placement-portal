@@ -249,10 +249,38 @@ export function MessagesView({ onStartCall, pendingOpenUserId, onOpened }: Props
   // This function now just performs the delete once that in-app popup
   // has already confirmed it.
   const deleteMessage = async (messageId: string) => {
-    if (!user) return;
+    if (!user || !activeConv) return;
+    // Was this the conversation's most recent message? If so, its preview
+    // text in the sidebar (`conversations.last_message`) needs updating
+    // too — otherwise a deleted message keeps showing under the other
+    // person's name in the conversation list forever, since that preview
+    // is its own separate column, not something derived live from the
+    // messages table.
+    const wasLast = messages[messages.length - 1]?.id === messageId;
     const { error } = await supabase.from('messages').delete().eq('id', messageId).eq('sender_id', user.id);
     if (error) { showToast('Could not delete message', 'error'); return; }
     setMessages((prev) => prev.filter((m) => m.id !== messageId));
+
+    if (wasLast) {
+      // Find whatever message is now the newest one left in this
+      // conversation (there may be none at all), and mirror it into the
+      // conversation's preview — falling back to a blank preview (which
+      // the sidebar renders as "No messages yet") if that was the very
+      // last message in the thread.
+      const { data: latest } = await supabase
+        .from('messages')
+        .select('body, attachment_name, created_at')
+        .eq('conversation_id', activeConv.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      await supabase.from('conversations').update({
+        last_message: latest ? (latest.body || `📎 ${latest.attachment_name}`) : '',
+        last_message_at: latest ? latest.created_at : activeConv.created_at,
+      }).eq('id', activeConv.id);
+      loadConversations();
+    }
+
     showToast('Message deleted', 'success');
   };
 

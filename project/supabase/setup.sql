@@ -1545,11 +1545,16 @@ CREATE TRIGGER trg_lock_company_applications
     'company_id,student_id,full_name,address,phone,email,resume_url,resume_filename,job_id'
   );
 
+-- NOTE: body/attachment_* are deliberately left out of this lock list.
+-- They're conditionally mutable (sender-only) via
+-- trg_prevent_message_content_edit_by_non_sender, defined further below;
+-- locking them here too caused every message edit to fail (see
+-- 20260826080000_fix_message_edit_lock_conflict.sql).
 DROP TRIGGER IF EXISTS trg_lock_messages ON messages;
 CREATE TRIGGER trg_lock_messages
   BEFORE UPDATE ON messages
   FOR EACH ROW EXECUTE FUNCTION lock_immutable_columns(
-    'conversation_id,sender_id,body,attachment_url,attachment_name,attachment_type'
+    'conversation_id,sender_id'
   );
 
 DROP TRIGGER IF EXISTS trg_lock_friends ON friends;

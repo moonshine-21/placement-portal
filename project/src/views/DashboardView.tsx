@@ -6,12 +6,11 @@
 // range), an AI recommendation blurb, a profile-completion checklist,
 // two decorative charts, and a preview of the latest announcements/events.
 //
-// Note: the "Placement Trend" and "Role Demand" charts near the bottom
-// use HARDCODED sample numbers (`trendData` and the `[85, 72, 64, 58, 45]`
-// array) — they're honestly just illustrative decoration, not
-// calculated from real data, since this app doesn't track historical
-// placement trends or live role-demand statistics. Worth knowing if
-// asked about them in a presentation.
+// Note: the "Placement Trend" chart near the bottom uses HARDCODED
+// sample numbers (`trendData`) — it's honestly just illustrative
+// decoration, not calculated from real data, since this app doesn't
+// track historical placement trends. Worth knowing if asked about it
+// in a presentation.
 // ============================================================================
 
 import { useEffect, useState } from 'react';
@@ -362,54 +361,27 @@ export function DashboardView({ onNavigate }: Props) {
         </div>
       </div>
 
-      {/* ---------- Decorative charts (see file-header note: sample data, not real stats) ---------- */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="card">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Placement Trend</h2>
-            <span className="text-xs text-[var(--text-muted)]">Last 8 months</span>
-          </div>
-          {/* A simple bar chart built from plain <div>s, not a charting
-              library — each bar's height is just set directly via inline
-              CSS (`height: ${v}%`), which is a lightweight way to build a
-              basic chart without pulling in a whole graphing dependency. */}
-          <div className="flex items-end justify-between gap-2 h-40">
-            {trendData.map((v, i) => (
-              <div key={i} className="flex flex-1 flex-col items-center gap-2">
-                <div
-                  className="w-full rounded-t-lg bg-gradient-to-t from-[var(--accent)]/40 to-[var(--accent)] transition-all hover:from-[var(--accent)]/60 hover:to-[var(--accent)]"
-                  style={{ height: `${v}%`, animation: `slide-up 0.6s ease ${i * 0.08}s both` }}
-                  title={`${v}%`}
-                />
-                <span className="text-[10px] text-[var(--text-muted)]">M{i + 1}</span>
-              </div>
-            ))}
-          </div>
+      {/* ---------- Decorative chart (see file-header note: sample data, not real stats) ---------- */}
+      <div className="card">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-sm font-semibold">Placement Trend</h2>
+          <span className="text-xs text-[var(--text-muted)]">Last 8 months</span>
         </div>
-        <div className="card">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Role Demand</h2>
-            <span className="text-xs text-[var(--text-muted)]">Open positions</span>
-          </div>
-          <div className="space-y-3">
-            {['Software Engineer', 'Data Analyst', 'Frontend Dev', 'Backend Dev', 'ML Engineer'].map((role, i) => {
-              const pct = [85, 72, 64, 58, 45][i];
-              return (
-                <div key={role}>
-                  <div className="mb-1 flex items-center justify-between text-xs">
-                    <span className="text-[var(--text-secondary)]">{role}</span>
-                    <span className="text-[var(--text-muted)]">{pct}%</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-[var(--border-strong)] overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-[var(--accent)] to-[var(--accent-2)]"
-                      style={{ width: `${pct}%`, animation: `slide-in-right 0.8s ease ${i * 0.1}s both` }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        {/* A simple bar chart built from plain <div>s, not a charting
+            library — each bar's height is just set directly via inline
+            CSS (`height: ${v}%`), which is a lightweight way to build a
+            basic chart without pulling in a whole graphing dependency. */}
+        <div className="flex items-end justify-between gap-2 h-40">
+          {trendData.map((v, i) => (
+            <div key={i} className="flex flex-1 flex-col items-center gap-2">
+              <div
+                className="w-full rounded-t-lg bg-gradient-to-t from-[var(--accent)]/40 to-[var(--accent)] transition-all hover:from-[var(--accent)]/60 hover:to-[var(--accent)]"
+                style={{ height: `${v}%`, animation: `slide-up 0.6s ease ${i * 0.08}s both` }}
+                title={`${v}%`}
+              />
+              <span className="text-[10px] text-[var(--text-muted)]">M{i + 1}</span>
+            </div>
+          ))}
         </div>
       </div>
 

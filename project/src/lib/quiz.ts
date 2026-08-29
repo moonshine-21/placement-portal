@@ -111,8 +111,14 @@ export async function createQuiz(companyId: string, draft: QuizDraft): Promise<{
 // Deletes a quiz entirely (and, thanks to the database's cascade rules,
 // every question/answer/assignment tied to it too).
 export async function deleteQuiz(quizId: string): Promise<{ error: string | null }> {
-  const { error } = await supabase.from('quizzes').delete().eq('id', quizId);
-  return { error: error?.message || null };
+  // `.select('id')` gets back the row(s) actually removed. Without it, a
+  // delete blocked by RLS (0 rows matched) reports success with no error
+  // at all — the caller would show "deleted" even though nothing changed
+  // server-side. Checking that at least one row came back catches that.
+  const { data, error } = await supabase.from('quizzes').delete().eq('id', quizId).select('id');
+  if (error) return { error: error.message };
+  if (!data || data.length === 0) return { error: 'Quiz could not be deleted — it may already be removed or you may not have permission.' };
+  return { error: null };
 }
 
 // A minimal shape used for the "pick a student to send this quiz to" list

@@ -50,61 +50,71 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
   // narrow, safe exception that returns just enough info (name, avatar,
   // branch) to search by, without exposing anything private.
   const searchStudents = async (q: string) => {
-    if (q.length < 2) {
+    q = q.trim();
+    if (q.length < 1) {
       setSearchResults([]);
       return;
     }
     setSearching(true);
-    try {
-      // Run BOTH the RPC and a direct `profiles` query every time, and
-      // merge them, rather than only falling back to the direct query
-      // when the RPC came back completely empty. The old "only fall back
-      // if results.length === 0" check couldn't rescue a search where the
-      // RPC returned SOME matches but was silently missing one specific
-      // person (e.g. someone you just unfriended) — from the outside that
-      // looks identical to "the RPC worked", so the fallback never ran and
-      // that one person stayed invisible no matter how many times you
-      // searched. Querying `profiles` directly is the reliable path here:
-      // its RLS policy (`select_profiles`) is open to any authenticated
-      // user with no friendship/role dependency at all, so nobody you've
-      // ever friended-then-removed can get stuck unable to be found again.
-      const [{ data, error }, direct] = await Promise.all([
-        supabase.rpc('search_students', { q }),
-          Promise.resolve(
-            supabase
-              .from('profiles')
-              .select('id, full_name, avatar_url, branch')
-              .ilike('full_name', `%${q}%`)
-              .neq('id', user?.id || '')
-              .or('role.eq.student,role.is.null,role.eq.owner,role.eq.admin')
-              // No client-side limit here — see supabase/migrations/
-              // 20260826060000_fully_uncap_student_search.sql for why a
-              // Supabase-dashboard "Max Rows" setting is the other half of
-              // actually removing the cap.
-          )
-            .then((r) => r.data as SearchResult[] | null)
-            .catch(() => null),
-      ]);
-
-      const fromRpc: SearchResult[] = error ? [] : ((data as SearchResult[]) || []);
-      const fromDirect: SearchResult[] = direct || [];
-
-      const byId = new Map<string, SearchResult>();
-      [...fromRpc, ...fromDirect].forEach((r) => {
-        if (r.id !== user?.id) byId.set(r.id, r);
+    // Run BOTH the RPC and a direct `profiles` query every time, and
+    // merge them, rather than only falling back to the direct query
+    // when the RPC came back completely empty. The old "only fall back
+    // if results.length === 0" check couldn't rescue a search where the
+    // RPC returned SOME matches but was silently missing one specific
+    // person (e.g. someone you just unfriended) — from the outside that
+    // looks identical to "the RPC worked", so the fallback never ran and
+    // that one person stayed invisible no matter how many times you
+    // searched. Querying `profiles` directly is the reliable path here:
+    // its RLS policy (`select_profiles`) is open to any authenticated
+    // user with no friendship/role dependency at all, so nobody you've
+    // ever friended-then-removed can get stuck unable to be found again.
+    //
+    // IMPORTANT: each query below is caught INDEPENDENTLY. Previously
+    // only the direct query had a `.catch()`, so the two were combined
+    // in a single `Promise.all([...])` where the (uncaught) RPC promise
+    // could reject the whole thing — silently discarding a perfectly
+    // good result from the direct query too, and making every search
+    // fail whenever the RPC had a hiccup (e.g. a stale PostgREST schema
+    // cache right after a migration). One failing query must never be
+    // able to wipe out the other's results.
+    const rpcPromise = supabase
+      .rpc('search_students', { q })
+      .then((r) => (r.error ? [] : ((r.data as SearchResult[]) || [])))
+      .catch((e) => {
+        console.error('search_students RPC failed:', e);
+        return [] as SearchResult[];
       });
 
-      setSearchResults(Array.from(byId.values()));
-    } catch {
-      setSearchResults([]);
-    } finally {
-      setSearching(false);
-    }
+    const directPromise = supabase
+      .from('profiles')
+      .select('id, full_name, avatar_url, branch')
+      .ilike('full_name', `%${q}%`)
+      .neq('id', user?.id || '')
+      .or('role.eq.student,role.is.null,role.eq.owner,role.eq.admin')
+      // No client-side limit here — see supabase/migrations/
+      // 20260826060000_fully_uncap_student_search.sql for why a
+      // Supabase-dashboard "Max Rows" setting is the other half of
+      // actually removing the cap.
+      .then((r) => (r.error ? [] : ((r.data as SearchResult[]) || [])))
+      .catch((e) => {
+        console.error('direct profiles search failed:', e);
+        return [] as SearchResult[];
+      });
+
+    const [fromRpc, fromDirect] = await Promise.all([rpcPromise, directPromise]);
+
+    const byId = new Map<string, SearchResult>();
+    [...fromRpc, ...fromDirect].forEach((r) => {
+      if (r.id !== user?.id) byId.set(r.id, r);
+    });
+
+    setSearchResults(Array.from(byId.values()));
+    setSearching(false);
   };
 
   // Debounced search
   useEffect(() => {
-    if (searchQuery) {
+    if (searchQuery.trim()) {
       const t = setTimeout(() => searchStudents(searchQuery), 300);
       return () => clearTimeout(t);
     } else {

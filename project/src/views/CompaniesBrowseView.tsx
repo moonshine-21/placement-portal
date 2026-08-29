@@ -162,7 +162,7 @@ export function CompaniesBrowseView({ onNavigate, pendingCompany, onConsumedPend
                   contain another button in HTML. */}
               <button onClick={() => setSelected(c)} className="block w-full text-left">
                 <div className="flex items-start gap-3">
-                  {c.avatar_url ? <img src={c.avatar_url} alt="" className="h-12 w-12 rounded-xl object-cover" /> : (
+                  {c.avatar_url ? <img src={c.avatar_url} alt="" className="h-12 w-12 rounded-xl object-cover object-top" /> : (
                     <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] text-sm font-bold text-white">{(c.org_name || 'CO').slice(0, 2).toUpperCase()}</div>
                   )}
                   <div className="min-w-0 flex-1">
@@ -219,8 +219,14 @@ function CompanyPublicView({ company, onBack, onNavigate, bookmarked, onToggleBo
           {company.banner_url && <img src={company.banner_url} alt="" className="h-full w-full object-cover" />}
         </div>
         <div className="px-6 pb-6">
-          <div className="-mt-10 mb-3 inline-block">
-            {company.avatar_url ? <img src={company.avatar_url} alt="" className="h-20 w-20 rounded-2xl border-4 border-[var(--bg-elevated)] object-cover" /> : (
+          {/* `relative z-10`: the banner div above is `position: relative`
+              (a positioned element), which per the CSS stacking spec
+              always paints above non-positioned in-flow siblings
+              regardless of DOM order — without this, the logo (in the
+              `-mt-10` div below, not positioned) was losing to the
+              banner and appearing to sit underneath it. */}
+          <div className="-mt-10 mb-3 inline-block relative z-10">
+            {company.avatar_url ? <img src={company.avatar_url} alt="" className="h-20 w-20 rounded-2xl border-4 border-[var(--bg-elevated)] object-cover object-top" /> : (
               <div className="flex h-20 w-20 items-center justify-center rounded-2xl border-4 border-[var(--bg-elevated)] bg-gradient-to-br from-[var(--accent)] to-[var(--accent-2)] text-lg font-bold text-white">{(company.org_name || 'CO').slice(0, 2).toUpperCase()}</div>
             )}
           </div>

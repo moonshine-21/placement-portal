@@ -101,6 +101,11 @@ function AppContent() {
   // into the Companies tab, instead of just switching tabs and leaving
   // the student to find it themselves.
   const [pendingCompanyView, setPendingCompanyView] = useState<{ company: CompanyProfile; job: Job } | null>(null);
+  // Once true, <AIAssistantView> below is mounted permanently for the
+  // rest of the session (just hidden via CSS when not the active tab)
+  // instead of being destroyed/recreated every time you navigate away
+  // and back — see the long comment further down for why that matters.
+  const [hasOpenedAIAssistant, setHasOpenedAIAssistant] = useState(false);
 
   // A password-recovery link logs the user into a real (but purpose-limited)
   // session so Supabase can verify the update. Intercept it here, before the
@@ -197,6 +202,10 @@ function AppContent() {
     effectiveView = role === 'company' ? 'company-dashboard' : 'dashboard';
   }
 
+  if (effectiveView === 'ai-assistant' && !hasOpenedAIAssistant) {
+    setHasOpenedAIAssistant(true);
+  }
+
   const { showToast } = useToast();
 
   // Called by various views (e.g. a "call this person" button) to kick
@@ -236,7 +245,9 @@ function AppContent() {
       case 'companies': return <CompaniesBrowseView onNavigate={(v) => setCurrentView(v as ViewKey)} pendingCompany={pendingCompanyView} onConsumedPendingCompany={() => setPendingCompanyView(null)} />;
       case 'messages': return <MessagesView onStartCall={startCall} pendingOpenUserId={pendingConvUser} onOpened={() => setPendingConvUser(null)} />;
       case 'friends': return <FriendsView onNavigate={(v) => setCurrentView(v as ViewKey)} onOpenConversation={openConversation} onStartCall={startCall} />;
-      case 'ai-assistant': return <AIAssistantView />;
+      // 'ai-assistant' is handled separately below, OUTSIDE this switch —
+      // see the comment near the bottom of this file for why.
+      case 'ai-assistant': return null;
       case 'settings': return <SettingsView onSignOut={handleSignOut} />;
       case 'company-dashboard': return <CompanyOverviewView onNavigate={(v) => setCurrentView(v as ViewKey)} />;
       case 'company-profile': return <CompanyProfileEditorView />;
@@ -267,7 +278,42 @@ function AppContent() {
 
           Deliberately NO fade/transition here — renders instantly, the
           moment loading finishes, with zero animation. */}
-      <AppShell currentView={effectiveView} onNavigate={(v) => setCurrentView(v)} onSignOut={handleSignOut}>
+      <AppShell
+        currentView={effectiveView}
+        onNavigate={(v) => setCurrentView(v)}
+        onSignOut={handleSignOut}
+        persistentContent={
+          /* AIAssistantView is deliberately kept OUT of `children`/the
+             renderView() switch below. AppShell wraps `children` in a
+             `<div key={currentView}>` (see AppShell.tsx) so its page-
+             change fade animation replays on every navigation — but
+             that same `key` change tells React to fully UNMOUNT and
+             rebuild everything inside it on every single navigation.
+             That's fine for a static page, but disastrous for a chat
+             mid-request: unmounting kills the component's state, so if
+             Gemini/the backend was still generating a reply when you
+             clicked over to the Dashboard, that reply had nowhere to
+             land and just vanished — the assistant looked like it had
+             silently stopped working, even though it was still "typing"
+             a second ago.
+             Fix: pass it through AppShell's separate `persistentContent`
+             prop instead, which renders OUTSIDE the keyed div — so once
+             a student has opened the AI Assistant, this component stays
+             mounted permanently for the rest of the session (same
+             "always alive, just hidden" trick already used for
+             CallManager below) and is never torn down by navigating
+             elsewhere. Only its CSS visibility toggles, based on whether
+             'ai-assistant' is the active tab. The chat, its in-flight
+             request, and the typing indicator now keep running in the
+             background no matter which tab is on screen, and switching
+             back shows it exactly as it currently stands. */
+          role === 'student' && hasOpenedAIAssistant ? (
+            <div style={{ display: effectiveView === 'ai-assistant' ? 'block' : 'none' }}>
+              <AIAssistantView />
+            </div>
+          ) : null
+        }
+      >
         {renderView()}
       </AppShell>
       {/* CallManager sits OUTSIDE AppShell (as a sibling, not a child) so

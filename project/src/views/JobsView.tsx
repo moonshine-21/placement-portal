@@ -30,6 +30,10 @@ export function JobsView() {
   // checks to decide between INSERT and UPDATE (see handleSubmit below).
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Which job's delete confirmation popup (the app's own, not the
+  // browser's native confirm()) is currently open, if any.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // One piece of state per form field — all kept as plain text/strings
   // even for numeric fields (package, employee counts), and converted to
@@ -99,11 +103,28 @@ export function JobsView() {
     setSaving(false); resetForm(); loadJobs();
   };
 
+  // Actually performs the delete, once the in-app confirmation popup
+  // (see confirmDeleteId) has been accepted.
+  //
+  // Previously this fired a "Job deleted" toast unconditionally right
+  // after calling `.delete()`, without checking whether the delete
+  // actually removed anything. If the row didn't match the DELETE RLS
+  // policy for some reason, Postgres/PostgREST doesn't raise an error —
+  // it just deletes zero rows and reports success. That combination is
+  // exactly why the toast could say "Job deleted" while the job was
+  // still sitting right there in the list afterward. Chaining `.select()`
+  // onto the delete gets back the rows that were ACTUALLY removed, so the
+  // toast (and the local list update) only fires for a delete that
+  // really happened, and a genuinely blocked delete now says so instead
+  // of lying.
   const deleteJob = async (id: string) => {
-    if (!confirm('Delete this job?')) return;
-    await supabase.from('jobs').delete().eq('id', id);
+    setDeleting(true);
+    const { data, error } = await supabase.from('jobs').delete().eq('id', id).select('id');
+    setDeleting(false);
+    if (error) { showToast('Could not delete job: ' + error.message, 'error'); return; }
+    if (!data || data.length === 0) { showToast('Job could not be deleted — it may already be removed or you may not have permission.', 'error'); return; }
+    setJobs((js) => js.filter((j) => j.id !== id));
     showToast('Job deleted', 'info');
-    loadJobs();
   };
 
   return (
@@ -148,7 +169,7 @@ export function JobsView() {
                     </div>
                     <div className="flex flex-col gap-1.5 flex-shrink-0">
                       <button onClick={() => editJob(j)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-strong)] text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]"><Edit3 size={14} /></button>
-                      <button onClick={() => deleteJob(j.id)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-strong)] text-[var(--text-secondary)] hover:text-rose-400 hover:border-rose-400"><Trash2 size={14} /></button>
+                      <button onClick={() => setConfirmDeleteId(j.id)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-strong)] text-[var(--text-secondary)] hover:text-rose-400 hover:border-rose-400"><Trash2 size={14} /></button>
                     </div>
                   </div>
                 </div>
@@ -180,6 +201,37 @@ export function JobsView() {
             <button type="button" onClick={resetForm} className="btn-ghost">Cancel</button>
           </div>
         </form>
+      )}
+
+      {/* The app's own delete-confirmation popup — same pattern as
+          MessagesView's — instead of the browser's native window.confirm(),
+          which renders as plain OS chrome stamped with the site's raw
+          URL rather than looking like part of the app. */}
+      {confirmDeleteId && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
+          onClick={() => setConfirmDeleteId(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-[var(--border-strong)] bg-[var(--bg-elevated)] p-5 shadow-xl animate-fade-in-scale"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm font-semibold text-[var(--text-primary)]">Delete this job?</p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">This cannot be undone.</p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button onClick={() => setConfirmDeleteId(null)} className="btn-ghost btn-sm">
+                Cancel
+              </button>
+              <button
+                disabled={deleting}
+                onClick={() => { const id = confirmDeleteId; setConfirmDeleteId(null); deleteJob(id); }}
+                className="flex items-center gap-1.5 rounded-xl bg-rose-500 px-3.5 py-2 text-sm font-medium text-white hover:bg-rose-600 disabled:opacity-60"
+              >
+                <Trash2 size={14} /> Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

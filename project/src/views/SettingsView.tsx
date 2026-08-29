@@ -7,6 +7,7 @@
 // ============================================================================
 
 import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '@/lib/auth';
 import { useTheme, getWallpaper, setWallpaper, type Theme } from '@/lib/theme';
 import { useToast } from '@/lib/toast';
@@ -268,7 +269,7 @@ export function SettingsView({ onSignOut }: Props) {
           dialog stamped with the site's raw URL instead of looking like
           part of the app (the same pattern MessagesView.tsx uses for
           confirming a message delete). */}
-      {confirmDelete && (
+      {confirmDelete && createPortal(
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in"
           onClick={() => { if (!deleting) setConfirmDelete(false); }}
@@ -297,7 +298,8 @@ export function SettingsView({ onSignOut }: Props) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

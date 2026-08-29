@@ -1807,10 +1807,16 @@ CREATE POLICY "update_quiz_assignments" ON quiz_assignments
   USING (company_id = auth.uid() OR student_id = auth.uid())
   WITH CHECK (company_id = auth.uid() OR student_id = auth.uid());
 
+-- NOTE: message_id is deliberately left out of this lock list. It's
+-- ON DELETE SET NULL against messages(id), so it legitimately needs to
+-- become NULL when the linked message is deleted (including via account
+-- deletion cascading through a person's sent messages) — locking it here
+-- caused that cleanup, and therefore the whole delete, to fail (see
+-- 20260829010000_fix_quiz_assignment_delete_lock_conflict.sql).
 DROP TRIGGER IF EXISTS trg_lock_quiz_assignments ON quiz_assignments;
 CREATE TRIGGER trg_lock_quiz_assignments
   BEFORE UPDATE ON quiz_assignments
-  FOR EACH ROW EXECUTE FUNCTION lock_immutable_columns('quiz_id,company_id,student_id,message_id');
+  FOR EACH ROW EXECUTE FUNCTION lock_immutable_columns('quiz_id,company_id,student_id');
 
 CREATE TABLE IF NOT EXISTS quiz_attempts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

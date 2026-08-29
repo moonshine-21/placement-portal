@@ -126,6 +126,7 @@ export function SettingsView({ onSignOut }: Props) {
   // the app's UI. This function just performs the deletion once that
   // in-app popup has already confirmed it.
   const deleteAccount = async () => {
+    if (deleting) return; // already in flight — ignore extra clicks instead of firing duplicate requests
     setDeleting(true);
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;

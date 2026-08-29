@@ -520,30 +520,50 @@ select.input-field {
   background: var(--text-muted);
 }
 
-/* ---------- Animations ---------- */
+/* ---------- Animations ----------
+   Every one of these "fade/slide in" animations uses the `both` fill mode,
+   which keeps the LAST keyframe's values applied forever once the
+   animation finishes (not just during it) — that's intentional, it's what
+   stops the element from snapping back to its pre-animation state.
+   The `to` keyframe below deliberately does NOT repeat a `transform: ...0`
+   value the way it might look natural to write. Leaving `transform`
+   unset here means the browser falls back to the element's normal,
+   non-animated transform (`none`) once the animation ends, whereas
+   writing `transform: translateY(0)` — a real, valid transform, NOT
+   the same thing as no transform at all, even though it looks
+   motionless — would stay applied permanently afterward. And ANY element
+   with a non-none transform silently becomes the new positioning
+   boundary for every `position: fixed` element inside it — including
+   modals like Settings' delete-account confirmation — trapping them
+   inside that element's own box instead of the real screen. Since
+   AppShell.tsx wraps EVERY page in `.animate-fade-in`, that stray
+   transform was quietly capturing every fixed-position modal on every
+   page after its very first render. Omitting the transform in `to` gets
+   the identical visible slide-in-and-settle motion, but leaves nothing
+   lingering behind once it's done. */
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  to { opacity: 1; }
 }
 
 @keyframes fade-in-scale {
   from { opacity: 0; transform: scale(0.96); }
-  to { opacity: 1; transform: scale(1); }
+  to { opacity: 1; }
 }
 
 @keyframes slide-up {
   from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
+  to { opacity: 1; }
 }
 
 @keyframes slide-down {
   from { opacity: 0; transform: translateY(-20px); }
-  to { opacity: 1; transform: translateY(0); }
+  to { opacity: 1; }
 }
 
 @keyframes slide-in-right {
   from { opacity: 0; transform: translateX(20px); }
-  to { opacity: 1; transform: translateX(0); }
+  to { opacity: 1; }
 }
 
 @keyframes pulse-ring {

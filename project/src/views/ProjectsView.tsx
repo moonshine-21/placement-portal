@@ -14,6 +14,7 @@ import { useToast } from '@/lib/toast';
 import { uploadPublicFile, timeAgo } from '@/lib/data';
 import { FolderGit2, Plus, X, Trash2, ExternalLink, Code2 } from 'lucide-react';
 import type { StudentProject } from '@/lib/supabase';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 export function ProjectsView() {
   const { profile, user } = useAuth();
@@ -75,12 +76,18 @@ export function ProjectsView() {
     load();
   };
 
-  // Deletes a project, after a native browser confirmation popup (a
-  // simple, no-frills way to prevent an accidental click from
-  // instantly deleting someone's work).
-  const remove = async (id: string) => {
-    if (!confirm('Delete this project?')) return;
-    await supabase.from('student_projects').delete().eq('id', id);
+  // Deletes a project, after the app's own confirmation popup (not the
+  // browser's native confirm()) — a simple, no-frills way to prevent an
+  // accidental click from instantly deleting someone's work.
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const remove = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    await supabase.from('student_projects').delete().eq('id', deleteTarget);
+    setDeleting(false);
+    setDeleteTarget(null);
     showToast('Project deleted', 'info');
     load();
   };
@@ -146,13 +153,22 @@ export function ProjectsView() {
                 <div className="flex items-center gap-2">
                   {/* Link button only shown if a project URL was actually provided. */}
                   {p.project_url && <a href={p.project_url} target="_blank" rel="noreferrer" className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-strong)] text-[var(--text-secondary)] hover:text-[var(--accent)] hover:border-[var(--accent)]"><ExternalLink size={14} /></a>}
-                  <button onClick={() => remove(p.id)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-strong)] text-[var(--text-secondary)] hover:text-rose-400 hover:border-rose-400"><Trash2 size={14} /></button>
+                  <button onClick={() => setDeleteTarget(p.id)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-strong)] text-[var(--text-secondary)] hover:text-rose-400 hover:border-rose-400"><Trash2 size={14} /></button>
                 </div>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete this project?"
+        busy={deleting}
+        busyLabel="Deleting…"
+        onConfirm={remove}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

@@ -191,11 +191,16 @@ function CompanyPublicView({ company, onBack, onNavigate, bookmarked, onToggleBo
   const [jobs, setJobs] = useState<Job[]>([]);
   // Controls the ApplyModal below: `null` = closed, a real Job = applying
   // to that SPECIFIC job, or the literal string `'general'` = applying to
-  // the company directly without picking a specific posting. Seeded from
-  // `initialJob` when arriving here via "View & Apply" on the Matches
-  // page, so the form is already open instead of making the student find
-  // and click Apply again on a job they already picked.
-  const [showApply, setShowApply] = useState<Job | null | 'general'>(initialJob || null);
+  // the company directly without picking a specific posting.
+  //
+  // This starts CLOSED even when arriving here via "View & Apply" on the
+  // Matches page — the student should land on the company's profile page
+  // first (see it, read About Us, check other open roles) and click
+  // Apply themselves, rather than the form popping up over a page they
+  // haven't even seen yet. `initialJob` (the specific role they matched
+  // against) is still used below to highlight that job in the Open Jobs
+  // list, so it's easy to find and click Apply on.
+  const [showApply, setShowApply] = useState<Job | null | 'general'>(null);
 
   useEffect(() => {
     // Only this company's currently OPEN jobs are shown — closed
@@ -205,9 +210,9 @@ function CompanyPublicView({ company, onBack, onNavigate, bookmarked, onToggleBo
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <button onClick={onBack} className="btn-ghost btn-sm"><ArrowLeft size={14} /> Back to Companies</button>
-        <button onClick={(e) => onToggleBookmark(e, company.id)} className={`btn-ghost btn-sm ${bookmarked ? 'text-[var(--accent)]' : ''}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <button onClick={onBack} className="btn-ghost btn-sm flex-shrink-0"><ArrowLeft size={14} /> Back to Companies</button>
+        <button onClick={(e) => onToggleBookmark(e, company.id)} className={`btn-ghost btn-sm flex-shrink-0 ${bookmarked ? 'text-[var(--accent)]' : ''}`}>
           {bookmarked ? <BookmarkCheck size={14} /> : <Bookmark size={14} />} {bookmarked ? 'Bookmarked' : 'Bookmark'}
         </button>
       </div>
@@ -246,19 +251,32 @@ function CompanyPublicView({ company, onBack, onNavigate, bookmarked, onToggleBo
           <div className="flex flex-col items-center gap-2 py-8 text-center"><Briefcase size="24" className="text-[var(--text-muted)]" /><p className="text-sm text-[var(--text-muted)]">No jobs posted yet.</p></div>
         ) : (
           <div className="space-y-3">
-            {jobs.map((j) => (
-              <div key={j.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div><h4 className="font-medium">{j.job_name}</h4><p className="text-xs text-[var(--text-muted)]">{j.role} · {j.package_lpa} LPA</p></div>
-                  {/* Clicking Apply on a SPECIFIC job passes that job
-                      object into showApply, so ApplyModal knows exactly
-                      which posting this application is for. */}
-                  <button onClick={() => setShowApply(j)} className="btn-primary btn-sm"><Send size={12} /> Apply</button>
+            {jobs.map((j) => {
+              // The specific job the student matched against on the
+              // Matches page (if any) gets a highlighted border + a
+              // "Matched" tag, so it's easy to spot in the list instead
+              // of the student having to remember which one it was.
+              const isMatched = initialJob?.id === j.id;
+              return (
+                <div key={j.id} className={`rounded-xl border p-4 transition-colors ${isMatched ? 'border-[var(--accent)] bg-[var(--accent)]/5' : 'border-[var(--border)] bg-[var(--surface)]'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="font-medium">{j.job_name}</h4>
+                        {isMatched && <span className="rounded-md bg-[var(--accent)]/15 px-2 py-0.5 text-[10px] font-bold text-[var(--accent)]">Matched</span>}
+                      </div>
+                      <p className="text-xs text-[var(--text-muted)]">{j.role} · {j.package_lpa} LPA</p>
+                    </div>
+                    {/* Clicking Apply on a SPECIFIC job passes that job
+                        object into showApply, so ApplyModal knows exactly
+                        which posting this application is for. */}
+                    <button onClick={() => setShowApply(j)} className="btn-primary btn-sm flex-shrink-0"><Send size={12} /> Apply</button>
+                  </div>
+                  {j.description && <p className="text-xs text-[var(--text-secondary)] mt-2">{j.description}</p>}
+                  {j.skills_required.length > 0 && <div className="flex flex-wrap gap-1.5 mt-2">{j.skills_required.map((s) => <span key={s} className="rounded-md bg-[var(--accent)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--accent)]">{s}</span>)}</div>}
                 </div>
-                {j.description && <p className="text-xs text-[var(--text-secondary)] mt-2">{j.description}</p>}
-                {j.skills_required.length > 0 && <div className="flex flex-wrap gap-1.5 mt-2">{j.skills_required.map((s) => <span key={s} className="rounded-md bg-[var(--accent)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--accent)]">{s}</span>)}</div>}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
         {/* A general "apply without a specific job" option, always
@@ -302,6 +320,16 @@ function ApplyModal({ company, job, onClose, onApplied }: { company: CompanyProf
   const [comment, setComment] = useState('');
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Locks the page's own scrollbar while this popup is open — without
+  // this, the page behind kept scrolling underneath the modal and its
+  // own scrollbar sat awkwardly alongside the popup's, which is what
+  // made the whole thing look visually broken/misaligned.
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prevOverflow; };
+  }, []);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -361,13 +389,25 @@ function ApplyModal({ company, job, onClose, onApplied }: { company: CompanyProf
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in" onClick={onClose}>
-      <form onSubmit={submit} className="glass w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto scroll-thin animate-fade-in-scale" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="font-semibold">Apply to {company.org_name}{job ? ` — ${job.job_name}` : ''}</h3>
-          <button type="button" onClick={onClose} className="text-[var(--text-muted)] hover:text-rose-400"><X size={20} /></button>
+      {/* `.modal-panel` (not `.glass`) — `.glass` is only ~4% opaque,
+          meant for panels sitting directly on the app background; on a
+          popup that floats OVER other page content (the company's About
+          Us text, job cards, etc. behind it) that near-transparency let
+          the background bleed straight through and ghost into this
+          form's own text and inputs, which is exactly what made this
+          popup look broken. `.modal-panel` is ~97% opaque instead, so
+          the form is always fully readable no matter what's behind it —
+          same class QuizCard/QuizzesView already use for their popups. */}
+      <form onSubmit={submit} className="modal-panel w-full max-w-lg max-h-[90vh] overflow-y-auto scroll-thin animate-fade-in-scale" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--surface-solid)] px-6 py-4">
+          <div className="min-w-0">
+            <h3 className="font-semibold truncate">Apply to {company.org_name}</h3>
+            {job && <p className="text-xs text-[var(--text-muted)] truncate mt-0.5">{job.job_name}</p>}
+          </div>
+          <button type="button" onClick={onClose} className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--surface-hover)] hover:text-rose-400"><X size={18} /></button>
         </div>
-        {job && <div className="mb-4 rounded-lg bg-[var(--surface)] p-3 text-sm text-[var(--text-secondary)]">{job.role} · {job.package_lpa} LPA</div>}
-        <div className="space-y-4">
+        <div className="p-6 space-y-4">
+          {job && <div className="rounded-lg bg-[var(--surface)] p-3 text-sm text-[var(--text-secondary)]">{job.role} · {job.package_lpa} LPA</div>}
           <div><label className="mb-1.5 block text-sm font-medium text-[var(--text-secondary)]">Full Name</label><input value={fullName} onChange={(e) => setFullName(e.target.value)} required className="input-field" /></div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div><label className="mb-1.5 block text-sm font-medium text-[var(--text-secondary)]">Phone</label><input value={phone} onChange={(e) => setPhone(e.target.value)} required className="input-field" /></div>

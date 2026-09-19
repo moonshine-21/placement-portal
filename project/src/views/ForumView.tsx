@@ -20,6 +20,7 @@ import { MessageCircle, Plus, X, ArrowLeft, Send, Trash2, Eye } from 'lucide-rea
 import type { ForumPost, ForumReply } from '@/lib/supabase';
 import { AdminBadge } from '@/components/AdminBadge';
 import { Select } from '@/components/Select';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 const CATEGORIES = [
   { key: 'general', label: 'General', color: '#94a3b8' },
@@ -109,9 +110,17 @@ export function ForumView() {
     setReplyText('');
   };
 
-  const deletePost = async (id: string) => {
-    if (!confirm('Delete this post and all replies?')) return;
-    await supabase.from('forum_posts').delete().eq('id', id);
+  // Which post (if any) the app's own delete-confirmation popup is open
+  // for — replaces the browser's native window.confirm().
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deletingPost, setDeletingPost] = useState(false);
+
+  const deletePost = async () => {
+    if (!deleteTarget) return;
+    setDeletingPost(true);
+    await supabase.from('forum_posts').delete().eq('id', deleteTarget);
+    setDeletingPost(false);
+    setDeleteTarget(null);
     showToast('Post deleted', 'info');
     setSelectedPost(null); // go back to the list, since the detail view we were on no longer exists
     loadPosts();
@@ -145,7 +154,7 @@ export function ForumView() {
             </div>
             {/* Only the original poster can delete their own post. */}
             {profile?.id === selectedPost.author_id && (
-              <button onClick={() => deletePost(selectedPost.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 flex-shrink-0"><Trash2 size={14} /></button>
+              <button onClick={() => setDeleteTarget(selectedPost.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 flex-shrink-0"><Trash2 size={14} /></button>
             )}
           </div>
           {/* `whitespace-pre-wrap` preserves any line breaks/spacing the
@@ -183,6 +192,16 @@ export function ForumView() {
             <button onClick={sendReply} disabled={!replyText.trim()} className="btn-primary h-10 w-10 !px-0 flex-shrink-0"><Send size={18} /></button>
           </div>
         </div>
+
+        <ConfirmDialog
+          open={!!deleteTarget}
+          title="Delete this post?"
+          description="This will also delete all of its replies. This cannot be undone."
+          busy={deletingPost}
+          busyLabel="Deleting…"
+          onConfirm={deletePost}
+          onCancel={() => setDeleteTarget(null)}
+        />
       </div>
     );
   }

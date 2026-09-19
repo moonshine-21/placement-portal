@@ -15,6 +15,7 @@ import { useFeatureFlags } from '@/lib/featureFlags';
 import { timeAgo } from '@/lib/data';
 import { Search, UserPlus, Phone, MessageSquare, X, Check, Users, Clock } from 'lucide-react';
 import { ProfileCardModal } from '@/components/ProfileCardModal';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import type { Friend, SearchResult } from '@/lib/supabase';
 
 type Props = {
@@ -272,9 +273,19 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
     loadAll();
   };
 
-  const removeFriend = async (friendRowId: string, name: string) => {
-    if (!confirm(`Remove ${name} from your friends?`)) return;
-    await supabase.from('friends').delete().eq('id', friendRowId);
+  // Which friend (if any) the app's own remove-confirmation popup is
+  // currently open for — replaces the browser's native window.confirm(),
+  // which rendered as an ugly OS-chrome dialog stamped with the site's raw
+  // URL instead of looking like part of the app.
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; name: string } | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  const removeFriend = async () => {
+    if (!removeTarget) return;
+    setRemoving(true);
+    await supabase.from('friends').delete().eq('id', removeTarget.id);
+    setRemoving(false);
+    setRemoveTarget(null);
     showToast('Friend removed', 'info');
     await loadAll();
     // Refresh search so the person can be found and re-added immediately
@@ -440,7 +451,7 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
                       <Phone size={14} /> Call
                     </button>
                   )}
-                  <button onClick={() => removeFriend(f.id, f.otherName)} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10" title="Remove">
+                  <button onClick={() => setRemoveTarget({ id: f.id, name: f.otherName })} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10" title="Remove">
                     <X size={16} />
                   </button>
                 </div>
@@ -461,6 +472,16 @@ export function FriendsView({ onNavigate, onOpenConversation, onStartCall }: Pro
           onCall={callsEnabled ? (id) => onStartCall(id, 'friend') : undefined}
         />
       )}
+
+      <ConfirmDialog
+        open={!!removeTarget}
+        title={`Remove ${removeTarget?.name || 'this friend'} from your friends?`}
+        confirmLabel="Remove"
+        busyLabel="Removing…"
+        busy={removing}
+        onConfirm={removeFriend}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </div>
   );
 }

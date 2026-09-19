@@ -18,6 +18,7 @@ import { Megaphone, Plus, X, Trash2, AlertCircle, Info, Zap } from 'lucide-react
 import type { Announcement } from '@/lib/supabase';
 import { AdminBadge } from '@/components/AdminBadge';
 import { Select } from '@/components/Select';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 // A lookup table describing each priority level's label, icon, and color
 // — one central place to change how a priority is displayed everywhere it
@@ -85,9 +86,17 @@ export function AnnouncementsView({ isCompany }: Props) {
     load();
   };
 
-  const remove = async (id: string) => {
-    if (!confirm('Delete this announcement?')) return;
-    await supabase.from('announcements').delete().eq('id', id);
+  // Which announcement (if any) the app's own delete-confirmation popup is
+  // open for — replaces the browser's native window.confirm().
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const remove = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    await supabase.from('announcements').delete().eq('id', deleteTarget);
+    setDeleting(false);
+    setDeleteTarget(null);
     showToast('Deleted', 'info');
     load();
   };
@@ -180,7 +189,7 @@ export function AnnouncementsView({ isCompany }: Props) {
                       posted this specific announcement — not to every
                       company/admin, and never to students. */}
                   {isOwner && canPost && (
-                    <button onClick={() => remove(a.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 flex-shrink-0">
+                    <button onClick={() => setDeleteTarget(a.id)} className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-rose-400 hover:bg-rose-500/10 flex-shrink-0">
                       <Trash2 size={14} />
                     </button>
                   )}
@@ -190,6 +199,15 @@ export function AnnouncementsView({ isCompany }: Props) {
           })}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete this announcement?"
+        busy={deleting}
+        busyLabel="Deleting…"
+        onConfirm={remove}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

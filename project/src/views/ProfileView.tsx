@@ -8,7 +8,7 @@
 // only actual place the role change is allowed to happen).
 // ============================================================================
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, useRef, type FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 import { saveProfile, uploadPublicFile } from '@/lib/data';
@@ -49,16 +49,31 @@ export function ProfileView() {
 
   // Whenever `profile` loads (or changes — e.g. after refreshProfile()),
   // copy its values into this form's local editable state.
+  //
+  // IMPORTANT: the text fields (name/bio/CGPA/branch/skills) only get
+  // copied in from `profile` the FIRST time it becomes available, not on
+  // every subsequent change — guarded by `loadedFieldsRef` below.
+  // Uploading a new avatar/banner calls refreshProfile() (see
+  // handleAvatar/handleBanner), which re-fetches `profile` from the
+  // server and used to re-run this WHOLE effect unconditionally — wiping
+  // out whatever the student had already typed into the form but not
+  // yet saved with the "Save Profile" button. Avatar/banner themselves
+  // stay reactive below since those two are the only fields a refresh
+  // could actually legitimately change out from under the form.
+  const loadedFieldsRef = useRef(false);
   useEffect(() => {
     if (profile) {
-      setFullName(profile.full_name || '');
-      setBio(profile.bio || '');
-      // Only show a CGPA value if it's actually set and greater than 0 —
-      // otherwise leave the field blank rather than showing a confusing "0".
-      setCgpa(profile.cgpa != null && Number(profile.cgpa) > 0 ? String(profile.cgpa) : '');
-      setBranch(profile.branch || '');
-      const sk = profile.skills;
-      setSkills(Array.isArray(sk) ? sk : []);
+      if (!loadedFieldsRef.current) {
+        setFullName(profile.full_name || '');
+        setBio(profile.bio || '');
+        // Only show a CGPA value if it's actually set and greater than 0 —
+        // otherwise leave the field blank rather than showing a confusing "0".
+        setCgpa(profile.cgpa != null && Number(profile.cgpa) > 0 ? String(profile.cgpa) : '');
+        setBranch(profile.branch || '');
+        const sk = profile.skills;
+        setSkills(Array.isArray(sk) ? sk : []);
+        loadedFieldsRef.current = true;
+      }
       setAvatarUrl(profile.avatar_url || '');
       setBannerUrl(profile.banner_url || '');
     }

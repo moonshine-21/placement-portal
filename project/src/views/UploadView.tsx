@@ -25,6 +25,7 @@ import { useAuth } from '@/lib/auth';
 import { useToast } from '@/lib/toast';
 import { uploadPrivateFile, saveProfile } from '@/lib/data';
 import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, Sparkles, Send, Bot, User as UserIcon, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 type DocumentAnalysis = {
   valid: boolean;
@@ -284,16 +285,24 @@ export function UploadView() {
     ]);
   };
 
+  // Whether the app's own "clear everything?" confirmation popup is open
+  // — replaces the browser's native window.confirm().
+  const [confirmClear, setConfirmClear] = useState(false);
+
   // Wipes every uploaded document's analysis, all the failure/warning
   // cards, and the entire chat thread — the same clean-slate state as if
   // the 20-minute inactivity timeout had just fired, but on demand.
-  const clearAll = () => {
+  const requestClearAll = () => {
     if (results.length === 0 && chat.length <= 1) return; // nothing to clear
-    if (!confirm('Clear all uploaded documents and this chat? This cannot be undone.')) return;
+    setConfirmClear(true);
+  };
+
+  const clearAll = () => {
     setResults([]);
     setExpandedId(null);
     setChat([WELCOME_MESSAGE]);
     sessionStorage.removeItem(SESSION_KEY);
+    setConfirmClear(false);
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -487,7 +496,7 @@ export function UploadView() {
             <p className="text-xs text-[var(--text-muted)]">Ask about anything you've uploaded</p>
           </div>
           <button
-            onClick={clearAll}
+            onClick={requestClearAll}
             title="Clear all uploads and chat"
             className="ml-auto flex items-center gap-1.5 rounded-lg border border-[var(--border-strong)] px-2.5 py-1.5 text-xs font-medium text-[var(--text-muted)] hover:border-rose-400 hover:text-rose-400"
           >
@@ -546,6 +555,16 @@ export function UploadView() {
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmClear}
+        title="Clear all uploaded documents and this chat?"
+        description="This cannot be undone."
+        confirmLabel="Clear"
+        busyLabel="Clearing…"
+        onConfirm={clearAll}
+        onCancel={() => setConfirmClear(false)}
+      />
     </div>
   );
 }

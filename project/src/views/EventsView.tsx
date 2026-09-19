@@ -15,6 +15,7 @@ import { timeAgo } from '@/lib/data';
 import { Calendar, MapPin, Users, Plus, X, Check, Clock, Link as LinkIcon, ChevronDown, ChevronUp } from 'lucide-react';
 import type { Event, EventRegistration } from '@/lib/supabase';
 import { Select } from '@/components/Select';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 // Every event category this app supports, with a matching accent color.
 const EVENT_TYPES = [
@@ -162,9 +163,17 @@ export function EventsView({ isCompany }: Props) {
     setLoadingRegsFor(null);
   };
 
-  const deleteEvent = async (id: string) => {
-    if (!confirm('Delete this event?')) return;
-    await supabase.from('events').delete().eq('id', id);
+  // Which event (if any) the app's own delete-confirmation popup is open
+  // for — replaces the browser's native window.confirm().
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deletingEvent, setDeletingEvent] = useState(false);
+
+  const deleteEvent = async () => {
+    if (!deleteTarget) return;
+    setDeletingEvent(true);
+    await supabase.from('events').delete().eq('id', deleteTarget);
+    setDeletingEvent(false);
+    setDeleteTarget(null);
     showToast('Event deleted', 'info');
     loadEvents();
   };
@@ -181,12 +190,17 @@ export function EventsView({ isCompany }: Props) {
           <Calendar size={20} className="text-[var(--accent)]" />
           <h2 className="text-lg font-semibold">Events</h2>
         </div>
-        <button onClick={() => setShowForm(!showForm)} className="btn-primary btn-sm">
-          <Plus size={14} /> {isCompany ? 'Post Event' : 'Create Event'}
-        </button>
+        {/* Only companies (and admins viewing via the company-events
+            route) can create events — students browse and register only,
+            they never get a "Create Event" button of their own. */}
+        {isCompany && (
+          <button onClick={() => setShowForm(!showForm)} className="btn-primary btn-sm">
+            <Plus size={14} /> Post Event
+          </button>
+        )}
       </div>
 
-      {showForm && (
+      {isCompany && showForm && (
         <form onSubmit={createEvent} className="card space-y-4 animate-slide-up">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold">New Event</h3>
@@ -268,7 +282,7 @@ export function EventsView({ isCompany }: Props) {
                         haven't already happened); a company viewing
                         someone else's event sees nothing at all. */}
                     {isOwner ? (
-                      <button onClick={() => deleteEvent(e.id)} className="btn-ghost btn-sm text-rose-400 hover:text-rose-300">Delete</button>
+                      <button onClick={() => setDeleteTarget(e.id)} className="btn-ghost btn-sm text-rose-400 hover:text-rose-300">Delete</button>
                     ) : !isCompany && !isPast ? (
                       isRegistered ? (
                         <button onClick={() => unregister(e.id)} className="btn-ghost btn-sm"><Check size={14} /> Registered</button>
@@ -309,6 +323,15 @@ export function EventsView({ isCompany }: Props) {
           })}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete this event?"
+        busy={deletingEvent}
+        busyLabel="Deleting…"
+        onConfirm={deleteEvent}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

@@ -28,6 +28,7 @@ import { useAuth } from '@/lib/auth';
 import { useToast } from '@/lib/toast';
 import { logAdminAction } from '@/lib/audit';
 import { Select } from '@/components/Select';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { timeAgo } from '@/lib/data';
 import {
   Users, ShieldAlert, ScrollText, Search, X, Ban, ShieldCheck, Save,
@@ -566,10 +567,19 @@ export function AdminContentView() {
   // A single shared delete function used for all four content types —
   // `table` says which database table to delete from, and the rest are
   // just for the confirmation prompt and the audit-log entry.
-  const remove = async (table: string, id: string, label: string, targetType: string) => {
-    if (!confirm(`Remove "${label}"? This cannot be undone.`)) return;
+  // Which content row (if any) the app's own delete-confirmation popup is
+  // open for — replaces the browser's native window.confirm().
+  const [removeTarget, setRemoveTarget] = useState<{ table: string; id: string; label: string; targetType: string } | null>(null);
+  const [removing, setRemoving] = useState(false);
+
+  const remove = async () => {
+    if (!removeTarget) return;
+    const { table, id, label, targetType } = removeTarget;
+    setRemoving(true);
     const { error } = await supabase.from(table).delete().eq('id', id);
+    setRemoving(false);
     if (error) { showToast('Delete failed: ' + error.message, 'error'); return; }
+    setRemoveTarget(null);
     await logAdminAction({
       actorId: adminProfile?.id || '', actorName: adminProfile?.full_name || adminProfile?.email || 'Admin',
       action: 'removed', targetType, targetId: id, targetLabel: label,
@@ -610,16 +620,16 @@ export function AdminContentView() {
               render nothing, even though all four lists are already
               loaded in memory. */}
           {tab === 'announcements' && announcements.map((a) => (
-            <Row key={a.id} title={a.title} sub={`${a.author_name} · ${timeAgo(a.created_at)}`} onDelete={() => remove('announcements', a.id, a.title, 'announcement')} />
+            <Row key={a.id} title={a.title} sub={`${a.author_name} · ${timeAgo(a.created_at)}`} onDelete={() => setRemoveTarget({ table: 'announcements', id: a.id, label: a.title, targetType: 'announcement' })} />
           ))}
           {tab === 'jobs' && jobs.map((j) => (
-            <Row key={j.id} title={j.job_name} sub={`${j.role} · ${j.status} · ${timeAgo(j.created_at)}`} onDelete={() => remove('jobs', j.id, j.job_name, 'job')} />
+            <Row key={j.id} title={j.job_name} sub={`${j.role} · ${j.status} · ${timeAgo(j.created_at)}`} onDelete={() => setRemoveTarget({ table: 'jobs', id: j.id, label: j.job_name, targetType: 'job' })} />
           ))}
           {tab === 'events' && events.map((e) => (
-            <Row key={e.id} title={e.title} sub={`${e.event_type} · ${timeAgo(e.created_at)}`} onDelete={() => remove('events', e.id, e.title, 'event')} />
+            <Row key={e.id} title={e.title} sub={`${e.event_type} · ${timeAgo(e.created_at)}`} onDelete={() => setRemoveTarget({ table: 'events', id: e.id, label: e.title, targetType: 'event' })} />
           ))}
           {tab === 'forum' && posts.map((p) => (
-            <Row key={p.id} title={p.title} sub={`${p.author_name} · ${timeAgo(p.created_at)}`} onDelete={() => remove('forum_posts', p.id, p.title, 'forum post')} />
+            <Row key={p.id} title={p.title} sub={`${p.author_name} · ${timeAgo(p.created_at)}`} onDelete={() => setRemoveTarget({ table: 'forum_posts', id: p.id, label: p.title, targetType: 'forum post' })} />
           ))}
           {/* Figures out which of the four lists is relevant to the
               current tab, and shows an empty-state message only if THAT
@@ -631,6 +641,16 @@ export function AdminContentView() {
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!removeTarget}
+        title={`Remove "${removeTarget?.label || ''}"?`}
+        description="This cannot be undone."
+        busy={removing}
+        busyLabel="Removing…"
+        onConfirm={remove}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </div>
   );
 }
